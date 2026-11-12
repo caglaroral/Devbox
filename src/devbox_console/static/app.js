@@ -147,16 +147,11 @@ function wantDims() {
   const k = (term.options.fontSize || fontSize) / fontSize; // cells shrink/grow with the font
   return { cols: Math.max(20, Math.floor(p.cols * k)), rows: Math.max(5, Math.floor(p.rows * k)) };
 }
-// buffer terminal: the program draws for one size only. The device that doesn't own it shows that size fitted
-// to its screen (bigger or smaller font) instead of blank space or a cropped view; your font comes back when it
-// owns the size again.
+// buffer terminal: the program draws for one size only, so a session is live on one device at a time (handoff).
+// The other device shows a "live on your other device" panel; using it (touch, click, mouse) takes it over.
 function applyPaneSize() {
   if (!isBuf() || !paneSize) return;
-  const want = wantDims();
-  const mine = paneSize.own || (paneSize.cols === want.cols && Math.abs(paneSize.rows - want.rows) <= 1);
-  const scale = Math.min(want.cols / paneSize.cols, want.rows / paneSize.rows);
-  const f = mine ? fontSize : Math.max(6, Math.min(32, Math.floor(fontSize * scale * 2) / 2));
-  if (term.options.fontSize !== f) term.options.fontSize = f;
+  if (term.options.fontSize !== fontSize) term.options.fontSize = fontSize;
   term.resize(paneSize.cols, paneSize.rows);
 } // when the console said it is restarting (close code 1012)
 let ws = null, wsKind = null, wsSess = null, wsWanted = false, wsRetry = 0, ctrlArmed = false;
@@ -190,6 +185,12 @@ window.addEventListener("focus", () => claimSize());
 // and let a click/tap take the size back.
 function updateSizeBar() {
   const bar = $("#sizeBar"), w = S.route === "term" ? cur() : null;
+  const want = isBuf() ? wantDims() : null;
+  const away = !!(isBuf() && w?.running && ws && paneSize && !paneSize.own &&
+    (paneSize.cols !== want.cols || Math.abs(paneSize.rows - want.rows) > 1));
+  $("#handoff").classList.toggle("hidden", !away);
+  if (away) $("#handoffSize").textContent = `${paneSize.cols}×${paneSize.rows}`;
+  if (isBuf()) { bar.classList.add("hidden"); return; } // buffer: the handoff panel instead of the bar
   let have = w && { cols: w.width, rows: w.height }, mine = { cols: term.cols, rows: term.rows };
   if (isBuf()) { have = paneSize; mine = wantDims(); }
   const off = w?.running && have?.cols && ws && wsKind === "tmux" && !(isBuf() && paneSize?.own) &&
@@ -200,6 +201,7 @@ function updateSizeBar() {
   bar.innerHTML = `Sized for ${smaller ? "a smaller" : "a bigger"} screen (<b>${have.cols}×${have.rows}</b>) — ${isTouch() ? "tap" : "click"} to fit here`;
 }
 $("#sizeBar").addEventListener("click", (e) => { e.stopPropagation(); claimSize(0); $("#sizeBar").classList.add("hidden"); });
+$("#handoff").addEventListener("click", (e) => { e.stopPropagation(); claimSize(0); $("#handoff").classList.add("hidden"); });
 $("#termWrap").addEventListener("pointerdown", () => claimSize(), true);
 $("#termWrap").addEventListener("mouseenter", () => claimSize());
 $("#termWrap").addEventListener("mousemove", () => claimSize(2000), { passive: true }); // back at the desk
