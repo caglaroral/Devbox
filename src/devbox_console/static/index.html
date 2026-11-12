@@ -21,10 +21,11 @@
     </div>
     <button class="search" id="openPalette"><span>⌕ Search or run…</span><kbd>Ctrl K</kbd></button>
     <nav>
-      <a href="#/hosts" data-nav="hosts"><span class="ico">⇄</span>Hosts<span class="count" id="hostCount">0</span></a>
-      <a href="#/sessions" data-nav="sessions"><span class="ico">▦</span>Sessions<span class="count" id="sessionCount">0</span></a>
-      <a href="#/team" data-nav="team"><span class="ico">☺</span>Team<span class="count hidden" id="unread">0</span></a>
-      <a href="#/settings" data-nav="settings"><span class="ico">⚙</span>Settings</a>
+      <!-- buttons, not links: browsers with "always underline links" would underline the menu -->
+      <button type="button" data-nav="hosts"><span class="ico">⇄</span>Hosts<span class="count" id="hostCount">0</span></button>
+      <button type="button" data-nav="sessions"><span class="ico">▦</span>Sessions<span class="count" id="sessionCount">0</span></button>
+      <button type="button" data-nav="team"><span class="ico">☺</span>Team<span class="count hidden" id="unread">0</span></button>
+      <button type="button" data-nav="settings"><span class="ico">⚙</span>Settings</button>
     </nav>
     <div class="section-title"><span>Hosts &amp; Sessions</span>
       <span><button class="icon-btn" id="newSessionBtn" title="New session on the selected host">＋</button><button class="icon-btn" id="newHostBtn" title="Add remote host">⇄＋</button></span></div>

@@ -50,10 +50,11 @@ a { color: var(--accent-fg); text-decoration: none; }
   padding: 6px 8px; font: inherit; cursor: pointer; }
 .search kbd { border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
 nav { display: flex; flex-direction: column; margin-top: 6px; }
-nav a, .winlist li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+nav button, .winlist li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
   color: var(--fg); cursor: pointer; user-select: none; }
-nav a:hover, .winlist li:hover { background: var(--bg-hover); }
-nav a.active, .winlist li.active { background: var(--bg-active); box-shadow: inset 2px 0 0 var(--accent); }
+nav button { width: 100%; background: none; border: 0; font: inherit; text-align: left; }
+nav button:hover, .winlist li:hover { background: var(--bg-hover); }
+nav button.active, .winlist li.active { background: var(--bg-active); box-shadow: inset 2px 0 0 var(--accent); }
 .ico { width: 16px; text-align: center; color: var(--fg-muted); }
 /* counts next to Hosts / Sessions: same look as the numbers in the Hosts & Sessions tree */
 .count { margin-left: auto; color: var(--fg-subtle); font: 11px var(--mono); text-decoration: none; }
@@ -356,7 +357,7 @@ dialog.wide[open] { display: flex; }
 /* touch: no hover, bigger targets */
 @media (pointer: coarse) {
   #hostList li .edit { visibility: visible; }
-  nav a, .winlist li { padding: 10px 8px; }
+  nav button, .winlist li { padding: 10px 8px; }
   .tree li.sess { padding-left: 34px; }
   .icon-btn { padding: 6px 8px; }
 }

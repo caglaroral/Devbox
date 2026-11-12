@@ -958,7 +958,7 @@ function route() {
   }
   S.route = r;
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${r === "shell" ? "term" : r}`));
-  $$("nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === r));
+  $$("nav [data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === r));
   $("#app").classList.remove("menu-open");
   if (isTermRoute()) requestAnimationFrame(() => { fit.fit(); if (!ws) connect(); });
   else closeWs();
@@ -1164,6 +1164,8 @@ $("#startAllBtn").onclick = async () => {
 };
 $("#newSessionBtn").onclick = () => openEditor();
 $("#newSessionBtn2").onclick = () => openEditor();
+
+$("nav").addEventListener("click", (e) => { const b = e.target.closest("[data-nav]"); if (b) go(`#/${b.dataset.nav}`); });
 
 /* ------------------------------------------------------------------ team */
 function fmtText(t) { return esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>"); }
