@@ -351,6 +351,18 @@ const pickFiles = () => { $("#attachInput").value = ""; $("#attachInput").click(
 $("#attachInput").addEventListener("change", (e) => sendFiles(realFiles(e.target.files)));
 $("#attachBtn").onclick = pickFiles;
 
+/* mouse wheel (desktop): same path as touch scrolling, so full-screen programs like claude get wheel events
+   and anything else scrolls tmux's history (otherwise the wheel turned into arrow keys or did nothing) */
+let wheelAcc = 0;
+term.attachCustomWheelEventHandler?.((e) => {
+  if (S.route !== "term" || wsKind !== "tmux" || e.ctrlKey) return true;
+  wheelAcc += e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * term.rows : e.deltaY / (fontSize * 1.2);
+  const n = Math.trunc(wheelAcc);
+  if (n) { wheelAcc -= n; wsSend({ t: "scroll", n: -Math.max(-30, Math.min(30, n)) }); }
+  e.preventDefault();
+  return false;
+});
+
 /* keybar */
 const KEYS = { esc: "\x1b", tab: "\t", shifttab: "\x1b[Z", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D", enter: "\r", ctrlc: "\x03" };
 function setCtrl(on) { ctrlArmed = on; $("#ctrlKey").classList.toggle("on", on); }

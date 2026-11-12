@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""A full-screen program like claude's TUI: alternate screen + mouse tracking (SGR unless --no-sgr).
+Writes every byte it receives (repr) to the log file given as the first argument."""
+import os
+import sys
+import termios
+import tty
+
+log = open(sys.argv[1], "a", buffering=1)
+sgr = "--no-sgr" not in sys.argv
+sys.stdout.write("\x1b[?1049h\x1b[?1003h" + ("\x1b[?1006h" if sgr else "") + "FULLSCREEN READY\r\n")
+sys.stdout.flush()
+tty.setraw(0)
+while True:
+    data = os.read(0, 1024)
+    if not data:
+        break
+    log.write(repr(data) + "\n")

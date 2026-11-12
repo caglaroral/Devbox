@@ -2009,6 +2009,22 @@ def _make_ctty() -> None:  # runs in the child after setsid (and after dropping 
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
+# $1 = target, $2 = up|down, $3 = copy-mode count, $4 = wheel events, $5 = copy-mode command
+SCROLL_SH = r"""
+set -- "$1" "$2" "$3" "$4" "$5" $(tmux display-message -p -t "$1" '#{alternate_on} #{mouse_any_flag}#{mouse_button_flag}#{mouse_standard_flag} #{mouse_sgr_flag}')
+if [ "$6" = 1 ] && [ "$7" != 000 ]; then
+  if [ "$2" = up ]; then btn=64; else btn=65; fi
+  if [ "$8" = 1 ]; then ev=$(printf '\033[<%s;10;5M' "$btn")
+  else ev=$(printf "\033[M$(printf '\\%03o' $((btn + 32)))*%%"); fi
+  i=0; keys=""; while [ $i -lt "$4" ]; do keys="$keys$ev"; i=$((i + 1)); done
+  tmux send-keys -t "$1" -l "$keys"
+  echo wheel
+else
+  [ "$2" = up ] && tmux copy-mode -e -t "$1"
+  tmux send-keys -t "$1" -X -N "$3" "$5"
+  echo copy
+fi
+"""
 TERM_SOCKETS: set = set()
 SHUTTING_DOWN = False
 
@@ -2145,16 +2161,18 @@ async def ws_term(req):
                     await b.tmux("select-window", "-t", f"{view}:{m['w']}")
                     shown = m["w"]
                 elif t == "scroll" and not shell_mode:
-                    # touch scrolling: drive tmux copy-mode (-e leaves it again at the bottom)
+                    # touch / wheel scrolling. A full-screen program (claude, vim, less: alternate screen) keeps
+                    # no tmux history, so copy-mode would show "[0/0]": when it asked for mouse input it gets
+                    # wheel events, like in a local terminal. Anything else scrolls tmux's copy-mode
+                    # (-e leaves it again at the bottom).
                     page, n = int(m.get("page", 0) or 0), int(m.get("n", 0) or 0)
                     up = page > 0 or n > 0
                     cmd = ("page-up" if up else "page-down") if page else ("scroll-up" if up else "scroll-down")
                     count = abs(page) or min(abs(n), 200)
-                    script = (f"tmux copy-mode -e -t {view}: ; " if up else "") + \
-                             f"tmux send-keys -t {view}: -X -N {count} {cmd}"
                     if count:
-                        await b.sh(script)
-                        if up:
+                        _, how = await b.sh(SCROLL_SH, f"{view}:", "up" if up else "down", str(count),
+                                            str(min(abs(page) * 10 or abs(n), 30)), cmd)
+                        if up and how.strip() == "copy":
                             b.scrolled[shown] = view
             elif msg.type == WSMsgType.BINARY:
                 os.write(master, msg.data)

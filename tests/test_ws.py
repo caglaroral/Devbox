@@ -134,3 +134,47 @@ def test_own_claims_keep_scrolling(console):
                 await asyncio.sleep(0.6)
                 assert in_mode() == "0", "the desktop taking the screen ends the phone's scrolling"
     asyncio.run(run())
+
+
+def test_scroll_full_screen_program_gets_wheel_events(console):
+    """claude draws on the alternate screen (no tmux history: copy-mode showed "[0/0]" and nothing moved)
+    and asks for mouse input: swipes and the wheel must reach it as wheel events, not copy-mode."""
+    import sys
+    from pathlib import Path
+    fake = Path(__file__).parent / "fakebin" / "fullscreen"
+    proj = console.work / "proj-a"
+    for name, extra in (("fs-sgr", ""), ("fs-x10", " --no-sgr")):
+        log = proj / f"{name}.log"
+        console.ok("POST", "/api/sessions", {"name": name, "cwd": str(proj), "command": f"{sys.executable} {fake} {log}{extra}"})
+        console.capture(name, needle="FULLSCREEN READY")
+        wid = console.window(name)["id"]
+
+        async def run():
+            async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
+                async with s.ws_connect(console.url.replace("http", "ws") + f"/ws/term?window={wid}&cols=51&rows=30") as ws:
+                    await read_for(ws, 0.5)
+                    await ws.send_str(json.dumps({"t": "scroll", "n": 3}))   # finger down = content up
+                    await ws.send_str(json.dumps({"t": "scroll", "n": -2}))
+                    await asyncio.sleep(1)
+        asyncio.run(run())
+        got = log.read_text() if log.exists() else ""
+        assert console.tmux("display", "-p", "-t", wid, "#{pane_in_mode}").strip() == "0", "no copy-mode"
+        if not extra:
+            assert got.count("\\x1b[<64;") == 3 and got.count("\\x1b[<65;") == 2, got
+        else:
+            assert got.count("\\x1b[M`") == 3 and got.count("\\x1b[Ma") == 2, got  # 32+64 / 32+65
+
+
+def test_scroll_plain_output_uses_copy_mode(console):
+    console.ok("POST", "/api/sessions", {"name": "plain", "cwd": str(console.work / "proj-a"), "command": "bash"})
+    wid = console.window("plain")["id"]
+
+    async def run():
+        async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
+            async with s.ws_connect(console.url.replace("http", "ws") + f"/ws/term?window={wid}&cols=80&rows=24") as ws:
+                await ws.send_str(json.dumps({"t": "in", "d": "seq 1 300\r"}))
+                await read_for(ws, 1.5)
+                await ws.send_str(json.dumps({"t": "scroll", "n": 15}))
+                await asyncio.sleep(0.6)
+    asyncio.run(run())
+    assert console.tmux("display", "-p", "-t", wid, "#{pane_in_mode} #{scroll_position}").split() == ["1", "15"]
