@@ -233,14 +233,55 @@ $("#termOverlay").addEventListener("click", async (e) => {
   await startSession(S.current, a === "resume");
 });
 
-term.onData((d) => {
+function typed(d) {
   if (ctrlArmed && d.length === 1) {
     const c = d.toUpperCase().charCodeAt(0);
     if (c >= 64 && c <= 95) d = String.fromCharCode(c - 64);
     setCtrl(false);
   }
   wsSend({ t: "in", d });
-});
+}
+term.onData(typed);
+
+/* Phone keyboards (Gboard, Samsung, iOS) compose words and, at every space, put the composed word back in.
+   xterm.js reads that as "the word was replaced" and sends erase + retype. On touch screens the console reads
+   xterm's hidden textarea itself and sends only the real difference: letters as you type them, nothing extra
+   at the space, and only the changed letters when the keyboard really corrects a word. */
+const IME_KEEP = "\u200b"; // never let the field be empty: a backspace there would not reach us
+function imeDiff(prev, next) {
+  let p = 0;
+  const n = Math.min(prev.length, next.length);
+  while (p < n && prev[p] === next[p]) p++;
+  return "\x7f".repeat([...prev.slice(p)].length) + next.slice(p).replace(/\r?\n/g, "\r").replaceAll(IME_KEEP, "");
+}
+if (isTouch() && term.textarea) {
+  const ta = term.textarea, box = $("#term");
+  let last = "";
+  const reset = () => { ta.value = IME_KEEP; last = IME_KEEP; try { ta.setSelectionRange(1, 1); } catch {} };
+  const flush = () => { const d = imeDiff(last, ta.value); last = ta.value; if (d) typed(d); };
+  const mine = (e) => e.target === ta;
+  reset();
+  ta.addEventListener("focus", () => { if (!ta.value) reset(); });
+  for (const ev of ["compositionstart", "compositionupdate", "keypress", "beforeinput"])
+    box.addEventListener(ev, (e) => { if (mine(e)) e.stopImmediatePropagation(); }, true);
+  box.addEventListener("compositionend", (e) => { if (!mine(e)) return; e.stopImmediatePropagation(); flush(); }, true);
+  box.addEventListener("input", (e) => {
+    if (!mine(e)) return;
+    e.stopImmediatePropagation();
+    flush();
+    if (!e.isComposing && (ta.value === "" || ta.value.includes("\n") || ta.value.length > 300)) reset();
+  }, true);
+  box.addEventListener("keydown", (e) => {
+    if (!mine(e)) return;
+    const k = e.key;
+    if (e.isComposing || e.keyCode === 229) { e.stopImmediatePropagation(); return; } // the input event carries it
+    if (k === "Enter") { e.stopImmediatePropagation(); e.preventDefault(); typed("\r"); reset(); return; }
+    if ((k === "Backspace" || (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey))) {
+      e.stopImmediatePropagation(); return; // the field changes → input → diff
+    }
+    // Esc, Tab, arrows, Ctrl+… (keybar or a hardware keyboard): xterm handles them as usual
+  }, true);
+}
 term.onBinary((d) => wsSend({ t: "bin", d: btoa(d) }));
 
 let resizeTimer;
@@ -270,10 +311,11 @@ $("#textBtn").onclick = () => openScreenText();
   const el = $("#termWrap");
   let y0 = null, acc = 0, pinch0 = null, f0 = fontSize, moved = false, lp = null, longPressed = false;
   let vel = 0, t0 = 0, glideRaf = 0;
+  const SCROLL_GAIN = 1.8; // lines scrolled per line of finger movement ("sensitivity")
   const scrollBy = () => { // whole lines out of the accumulated finger movement
-    const n = Math.trunc(acc / lineH());
+    const unit = lineH() / SCROLL_GAIN, n = Math.trunc(acc / unit);
     if (!n) return;
-    moved = true; acc -= n * lineH();
+    moved = true; acc -= n * unit;
     if (S.route === "shell") term.scrollLines(-n); else wsSend({ t: "scroll", n });
   };
   const stopGlide = () => { cancelAnimationFrame(glideRaf); glideRaf = 0; };
