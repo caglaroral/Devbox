@@ -145,6 +145,7 @@ let ws = null, wsKind = null, wsSess = null, wsWanted = false, wsRetry = 0, ctrl
 function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function overlay(msg, html = false) {
   const o = $("#termOverlay");
+  if (!html) o.dataset.stopped = ""; // only showStopped() puts the stopped panel up
   if (!msg) return o.classList.add("hidden");
   if (html) o.innerHTML = msg; else o.textContent = msg;
   o.classList.remove("hidden");
@@ -245,6 +246,7 @@ function connect() {
 
 function showStopped(w) {
   term.reset();
+  $("#termOverlay").dataset.stopped = w ? w.name : "";
   if (!w) return overlay("Session not found");
   overlay(`<div class="stopped-box"><b>${esc(w.display)}</b><span>This session is stopped. Folder: <code>${esc(shortPath(w.cwd))}</code></span>
     <div><button class="btn primary" data-ov="resume">Resume (--continue)</button> <button class="btn" data-ov="fresh">Start fresh</button></div></div>`, true);
@@ -571,7 +573,7 @@ function applySnapshot(snap) {
       applySnapshot.seen = null; closeWs(); toast(`${S.current} closed`); go("#/sessions"); return;
     }
     if (w?.running && (!ws || wsKind !== "tmux")) { overlay(null); connect(); }
-    else if (w && !w.running && ws) { closeWs(); showStopped(w); }
+    else if (w && !w.running && (ws || $("#termOverlay").dataset.stopped !== w.name)) { closeWs(); showStopped(w); } // (also replaces "Connecting…"/"not found")
   }
 }
 
