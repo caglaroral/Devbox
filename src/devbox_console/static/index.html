@@ -52,15 +52,15 @@
         <div class="head-actions">
           <button class="btn" id="copyBtn" title="Copy selection (Ctrl+Shift+C)">Copy</button>
           <button class="btn" id="pasteBtn" title="Paste (Ctrl+V)">Paste</button>
-          <button class="btn" id="attachBtn" title="Send an image (or paste / drop one on the terminal)">📎 Image</button>
+          <button class="btn" id="attachBtn" title="Send files (or paste / drop them on the terminal)">📎 Attach</button>
           <button class="btn" id="textBtn" title="Open the screen as text (select/copy)">Text</button>
           <button class="btn" id="fontMinus" title="Smaller font">A−</button>
           <button class="btn" id="fontPlus" title="Larger font">A+</button>
         </div>
         <button class="btn" id="manageBtn" title="Manage session">⋯</button>
       </header>
-      <div id="termWrap"><div id="term"></div><div id="termOverlay" class="hidden"></div><div id="dropHint">Drop the image to send it to this session</div></div>
-      <input type="file" id="attachInput" accept="image/png,image/jpeg,image/gif,image/webp,image/*" multiple hidden>
+      <div id="termWrap"><div id="term"></div><div id="termOverlay" class="hidden"></div><div id="dropHint">Drop files to send them to this session</div></div>
+      <input type="file" id="attachInput" multiple hidden>
       <div id="keybar">
         <button data-key="esc">Esc</button>
         <button data-key="tab">Tab</button>
@@ -76,7 +76,7 @@
         <button data-key="pgdn">PgDn</button>
         <button data-action="select">Select</button>
         <button data-action="paste">Paste</button>
-        <button data-action="attach" title="Send an image">📎</button>
+        <button data-action="attach" title="Attach files">📎</button>
         <button data-action="compose">✎ Type</button>
         <button data-action="manage">⋯</button>
       </div>

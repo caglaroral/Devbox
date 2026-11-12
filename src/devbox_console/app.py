@@ -657,6 +657,12 @@ class User:
                 old.unlink()
             if sec:
                 self.host_secrets[h["id"]] = sec
+        # The runtime dir is a tmpfs, empty after every container restart: put the stored console key back
+        # now, before the pollers start. Otherwise every host reached with it fails ("Identity file … not
+        # accessible") until some page happens to call ensure_key().
+        rec = await STORE.get(self.sp("ssh-key"))
+        if rec and not self.key.exists():
+            self._write_private(self.key, rec["private"])
 
     def _migrate(self) -> None:
         """Older single-host layout kept sessions in settings.json."""
@@ -1347,12 +1353,12 @@ async def api_window_action(req):
     return web.json_response({"ok": True})
 
 
-# ---------------------------------------------------------------- uploads (images sent from the browser)
+# ---------------------------------------------------------------- uploads (files sent from the browser)
 
-UPLOAD_MAX = 10 * 1024 * 1024
+UPLOAD_MAX = 25 * 1024 * 1024
 UPLOAD_KEEP_MIN = 7 * 24 * 60  # uploads older than 7 days are removed on the next upload
 UPLOAD_MAGIC = [(b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif")]
-# $1 = tmux window id or "" (plain shell), $2 = file name. The image arrives on stdin.
+# $1 = tmux window id or "" (plain shell), $2 = file name, $3 = keep minutes. The file arrives on stdin.
 # Goes to <folder the pane is in>/.devbox/uploads, kept out of git via .git/info/exclude.
 UPLOAD_SH = r"""
 dir=
@@ -1374,6 +1380,26 @@ printf '%s' "$up/$2"
 """
 
 
+UPLOAD_TYPE_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp",
+                   "application/pdf": "pdf", "text/plain": "txt", "text/csv": "csv", "application/json": "json"}
+
+
+def upload_name(original: str, head: bytes, ctype: str) -> str:
+    """Name on disk: '<time>-<original name>' (made safe), or 'img-…/file-…' when the browser gives none
+    (a pasted screenshot). Never a path: slashes, leading dots and odd characters are removed."""
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    base = re.sub(r"[^\w.-]+", "_", original.replace("\\", "/").rsplit("/", 1)[-1]).strip("._")
+    if base:
+        stem, dot, ext = base.rpartition(".")
+        if dot and stem and 0 < len(ext) <= 10:
+            return f"{ts}-{stem[:80]}.{ext}"
+        return f"{ts}-{base[:90]}"
+    ext = image_ext(head)
+    if ext:
+        return f"img-{ts}-{secrets.token_hex(2)}.{ext}"
+    return f"file-{ts}-{secrets.token_hex(2)}.{UPLOAD_TYPE_EXT.get(ctype.split(';')[0].strip(), 'bin')}"
+
+
 def image_ext(head: bytes) -> str | None:
     for magic, ext in UPLOAD_MAGIC:
         if head.startswith(magic):
@@ -1384,7 +1410,7 @@ def image_ext(head: bytes) -> str | None:
 
 
 async def api_upload(req):
-    """Save an image into the folder the session's pane is in; returns the path to put into the prompt."""
+    """Save a file (any type) into the folder the session's pane is in; returns the path to put into the prompt."""
     b = B(req)
     wid = req.query.get("window", "")
     if wid and not WID_RE.fullmatch(wid):
@@ -1394,15 +1420,14 @@ async def api_upload(req):
         data += chunk
         if len(data) > UPLOAD_MAX:
             raise web.HTTPRequestEntityTooLarge(max_size=UPLOAD_MAX, actual_size=len(data))
-    ext = image_ext(bytes(data[:16]))
-    if not ext:
-        raise web.HTTPBadRequest(text="only PNG, JPEG, GIF or WebP images")
-    name = time.strftime("img-%Y%m%d-%H%M%S-") + secrets.token_hex(2) + "." + ext
+    if not data:
+        raise web.HTTPBadRequest(text="empty file")
+    name = upload_name(req.query.get("name", ""), bytes(data[:16]), req.headers.get("Content-Type", ""))
     rc, out = await b.run(["sh", "-c", UPLOAD_SH, "sh", wid, name, str(UPLOAD_KEEP_MIN)], timeout=90, input=bytes(data))
     path = out.strip()
     if rc or not path:
         b.user.log.write("upload.failed", host=b.id, window=wid or "-", rc=rc, size=len(data))
-        raise web.HTTPInternalServerError(text=f"could not save the image on {b.label} (exit {rc})")
+        raise web.HTTPInternalServerError(text=f"could not save the file on {b.label} (exit {rc})")
     b.user.log.write("upload", host=b.id, window=wid or "-", path=path, size=len(data))
     return web.json_response({"path": path, "name": name, "size": len(data)})
 

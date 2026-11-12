@@ -29,7 +29,8 @@ Terminal, ttyd yerine konsolun kendi PTY ⇄ WebSocket köprüsüyle xterm.js'e 
 
 Kopyala/yapıştır:
 - **Masaüstü:** Ctrl+Shift+C ile kopyala, Ctrl+V ile yapıştır; tmux copy-mode'dan OSC 52 ile kopyalama.
-- **Resim gönderme:** Terminalde Ctrl+V ile yapıştır, dosyayı terminale sürükle ya da 📎 (mobilde galeri/kamera). Resim session'ın çalıştığı klasörde `.devbox/uploads/` altına kaydedilir (git'e girmez, 7 gün sonra silinir) ve yolu prompt'a yazılır.
+- **Dosya gönderme (📎 Attach):** Her tür dosya (resim, PDF, log, CSV…, en fazla 25 MB). Terminalde Ctrl+V ile yapıştır (ekran görüntüsü), dosyayı terminale sürükle ya da 📎 (mobilde dosya/galeri/kamera). Dosya session'ın çalıştığı klasörde `.devbox/uploads/` altına `<zaman>-<dosya adı>` olarak kaydedilir (git'e girmez, 7 gün sonra silinir) ve yolu prompt'a yazılır.
+- **Event log:** Settings → Event log; terminal bağlantı/kopmaları, host erişimi, session'lar, yüklemeler, girişler. `<data>/users/<kullanıcı>/logs/` altında günlük dosyalar, 7 gün sonra silinir (`DEVBOX_LOG_DAYS`).
 - **Mobil:** Terminale **uzun basınca** ekran metni yerel seçim tutamaçlarıyla açılır (Seçimi kopyala / Terminale yaz). Alttaki tuş çubuğunda Esc, Tab, Ctrl, oklar, ^C, ⇧Tab, PgUp/PgDn, Yapıştır ve ✎ Yaz (dikte/otomatik düzeltme için) bulunur. Kaydırma tmux copy-mode'u sürer, iki parmakla yazı boyutu değişir.
 
 ## Kurulum — Docker Compose (önerilen)

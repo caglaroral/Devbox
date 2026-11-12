@@ -280,18 +280,18 @@ $("#textBtn").onclick = () => openScreenText();
   el.addEventListener("contextmenu", (e) => { if (isTouch()) e.preventDefault(); });
 })();
 
-/* images: paste / drop / 📎 → saved into <session folder>/.devbox/uploads on its host, path typed into the prompt */
-const UPLOAD_MAX = 10 * 1024 * 1024;
-const imageFiles = (list) => [...(list || [])].filter((f) => f && f.type.startsWith("image/"));
-async function sendImages(files) {
+/* files: paste / drop / 📎 → saved into <session folder>/.devbox/uploads on its host, path typed into the prompt */
+const UPLOAD_MAX = 25 * 1024 * 1024;
+const realFiles = (list) => [...(list || [])].filter(Boolean);
+async function sendFiles(files) {
   if (!files.length) return;
   if (!isTermRoute() || (S.route === "term" && !cur()?.running)) return toast("Open a running session first");
   const w = S.route === "term" ? cur() : null, paths = [];
   for (const f of files) {
-    if (f.size > UPLOAD_MAX) { toast(`${f.name || "image"}: larger than 10 MB`); continue; }
-    toast(`Sending ${f.name || "image"} (${Math.ceil(f.size / 1024)} KB)…`);
+    if (f.size > UPLOAD_MAX) { toast(`${f.name || "file"}: larger than 25 MB`); continue; }
+    toast(`Sending ${f.name || "file"} (${Math.ceil(f.size / 1024)} KB)…`);
     try {
-      const q = w ? `?window=${encodeURIComponent(w.id)}` : "";
+      const q = "?" + new URLSearchParams({ ...(w ? { window: w.id } : {}), ...(f.name && f.name !== "image.png" ? { name: f.name } : {}) });
       const r = await fetch(withHost(`/api/upload${q}`), { method: "POST", body: f, headers: { "Content-Type": f.type || "application/octet-stream" } });
       if (r.status === 401) { location.href = "/login"; return; }
       if (!r.ok) throw new Error((await r.text()) || r.statusText);
@@ -301,14 +301,14 @@ async function sendImages(files) {
   if (!paths.length) return;
   const quote = (p) => (/^[\w@%+=:,./~-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
   term.paste(paths.map(quote).join(" ") + " "); // like dropping files on a local terminal: claude attaches them
-  toast(paths.length === 1 ? `Image sent: ${paths[0].split("/").slice(-3).join("/")}` : `${paths.length} images sent`);
+  toast(paths.length === 1 ? `Sent: ${paths[0].split("/").slice(-3).join("/")}` : `${paths.length} files sent`);
   if (!isTouch()) term.focus();
 }
 $("#termWrap").addEventListener("paste", (e) => {
-  const files = imageFiles([...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()));
+  const files = realFiles([...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()));
   if (!files.length) return; // plain text: xterm pastes it
   e.preventDefault(); e.stopPropagation();
-  sendImages(files);
+  sendFiles(files);
 }, true);
 (() => {
   const el = $("#termWrap");
@@ -321,13 +321,13 @@ $("#termWrap").addEventListener("paste", (e) => {
     depth = 0; el.classList.remove("dropping");
     if (!hasFiles(e)) return;
     e.preventDefault();
-    const files = imageFiles(e.dataTransfer.files);
-    files.length ? sendImages(files) : toast("Only images can be sent");
+    const files = realFiles(e.dataTransfer.files);
+    if (files.length) sendFiles(files);
   });
 })();
-const pickImages = () => { $("#attachInput").value = ""; $("#attachInput").click(); };
-$("#attachInput").addEventListener("change", (e) => sendImages(imageFiles(e.target.files)));
-$("#attachBtn").onclick = pickImages;
+const pickFiles = () => { $("#attachInput").value = ""; $("#attachInput").click(); };
+$("#attachInput").addEventListener("change", (e) => sendFiles(realFiles(e.target.files)));
+$("#attachBtn").onclick = pickFiles;
 
 /* keybar */
 const KEYS = { esc: "\x1b", tab: "\t", shifttab: "\x1b[Z", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D", enter: "\r", ctrlc: "\x03" };
@@ -342,7 +342,7 @@ $("#keybar").addEventListener("click", (e) => {
   if (k) return wsSend({ t: "in", d: KEYS[k] });
   if (a === "select") return term.hasSelection() ? copyText(term.getSelection()) : openScreenText();
   if (a === "paste") return pasteFromClipboard();
-  if (a === "attach") return pickImages();
+  if (a === "attach") return pickFiles();
   if (a === "manage") return openManage();
   if (a === "compose") return openPasteDialog("Type", "Comfortable typing with autocorrect and dictation. Send passes it to the terminal.", true);
 });

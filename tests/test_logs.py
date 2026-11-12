@@ -74,3 +74,21 @@ def test_prune_and_clear(console):
         assert c2.ok("GET", "/api/logs")["lines"] == []
     finally:
         c2.stop()
+
+
+def test_console_key_is_restored_after_restart(console):
+    """The runtime dir is a tmpfs in Docker: after a restart the console SSH key must be written back right
+    away, not only when the Settings page asks for it (hosts reached with the key failed until then)."""
+    pub = console.ok("GET", "/api/ssh-key")["public_key"]
+    key = console.base / "run" / f"devbox-{os.geteuid()}" / "users" / console.user / "id_ed25519"
+    assert key.exists() and pub
+    console.stop()
+    import shutil
+    shutil.rmtree(console.base / "run")  # what a container restart does to the tmpfs
+    from conftest import Console
+    c2 = Console(console.base)
+    try:
+        assert key.exists(), "key written back at startup, before any page asks for it"
+        assert c2.ok("GET", "/api/ssh-key")["public_key"] == pub
+    finally:
+        c2.stop()

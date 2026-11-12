@@ -37,6 +37,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - console-data:/data
+      - /etc/localtime:/etc/localtime:ro   # log times in the host's timezone, not UTC
     tmpfs:
       - /run/devbox:mode=0700,uid=1000,gid=1000
     restart: unless-stopped

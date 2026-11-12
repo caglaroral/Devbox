@@ -1,4 +1,4 @@
-"""Images sent from the browser: saved into <pane folder>/.devbox/uploads on the session's host."""
+"""Files sent from the browser (📎 Attach): saved into <pane folder>/.devbox/uploads on the session's host."""
 import os
 import subprocess
 import time
@@ -8,9 +8,9 @@ import urllib.request
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
 
 
-def upload(console, query: str, data: bytes):
+def upload(console, query: str, data: bytes, ctype: str = "image/png"):
     req = urllib.request.Request(console.url + "/api/upload" + query, method="POST", data=data,
-                                 headers={"Cookie": console.cookie, "Content-Type": "image/png"})
+                                 headers={"Cookie": console.cookie, "Content-Type": ctype})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             import json
@@ -43,8 +43,31 @@ def test_upload_local_into_session_folder(console):
     assert r2["path"] != path
 
 
-def test_upload_rejects_non_images_and_bad_ids(console):
-    assert upload(console, "", b"#!/bin/sh\necho hi\n")[0] == 400
+def test_upload_any_file_keeps_a_safe_name(console):
+    proj = console.work / "proj-b"
+    console.ok("POST", "/api/sessions", {"name": "docs", "cwd": str(proj), "command": "cat"})
+    wid = console.window("docs")["id"]
+    up = proj / ".devbox" / "uploads"
+
+    st, r = upload(console, f"?window={wid}&name=Rapor%20Q3.pdf", b"%PDF-1.7 ...", "application/pdf")
+    assert st == 200, r
+    assert r["path"].startswith(str(up) + "/") and r["path"].endswith("-Rapor_Q3.pdf")
+    st, r = upload(console, f"?window={wid}&name=error.log", b"line 1\nline 2\n", "text/plain")
+    assert st == 200 and r["path"].endswith("-error.log") and open(r["path"]).read() == "line 1\nline 2\n"
+
+    # never a path: traversal and hidden names stay inside uploads/
+    for evil in ("../../etc/passwd", "..%2F..%2Fx.sh", ".bashrc", "a/b\\c.txt"):
+        st, r = upload(console, f"?window={wid}&name={evil}", b"x", "text/plain")
+        assert st == 200, r
+        p = r["path"]
+        assert os.path.dirname(p) == str(up) and not os.path.basename(p).split("-", 2)[-1].startswith("."), p
+    # no name (a pasted screenshot) -> img-…png; unknown type -> file-….bin
+    assert upload(console, f"?window={wid}", PNG)[1]["name"].startswith("img-")
+    assert upload(console, f"?window={wid}", b"\x00\x01", "application/octet-stream")[1]["name"].endswith(".bin")
+    assert upload(console, f"?window={wid}", b"")[0] == 400
+
+
+def test_upload_rejects_bad_ids(console):
     assert upload(console, "?window=@1;rm", PNG)[0] == 400
     assert upload(console, "?host=../x", PNG)[0] == 400
     req = urllib.request.Request(console.url + "/api/upload", method="POST", data=PNG)
@@ -56,7 +79,7 @@ def test_upload_rejects_non_images_and_bad_ids(console):
 
 
 def test_upload_too_large(console):
-    st, _ = upload(console, "", PNG + b"\0" * (10 * 1024 * 1024))
+    st, _ = upload(console, "", PNG + b"\0" * (25 * 1024 * 1024))
     assert st == 413
 
 
