@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.7
+- Wider ☰ menu button on phones.
+
 ## v0.7.6
 - **↓ Jump to bottom** in the terminal when scrolled up in the buffer (**↓ New output** when something new
   arrived meanwhile) — claude's full-screen mode used to show one.
