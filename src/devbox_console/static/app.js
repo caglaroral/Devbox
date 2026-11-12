@@ -147,7 +147,7 @@ function claimSize(gap = 500) {
   if (wsKind !== "tmux" || !ws || ws.readyState !== 1 || document.hidden) return;
   const now = Date.now(); if (now - lastClaim < (typeof gap === "number" ? gap : 500)) return;
   lastClaim = now;
-  wsSend({ t: "in", d: "\x1b[I" });
+  wsSend({ t: "claim" }); // not typing: it must not end this device's own scrolling
   $("#sizeBar")?.classList.add("hidden"); // the next snapshot shows the new size
 }
 window.addEventListener("focus", () => claimSize());

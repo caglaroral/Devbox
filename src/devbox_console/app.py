@@ -401,7 +401,7 @@ class Box:
         self.last_ok = 0.0
         # windows a browser scrolled into tmux copy-mode (touch scrolling). Copy-mode belongs to the pane, so it
         # also freezes every other device's view and swallows typing: the next input from anywhere leaves it.
-        self.scrolled: set[str] = set()
+        self.scrolled: dict[str, str] = {}  # window id -> the browser view that scrolled it
 
     @property
     def remote(self) -> bool:
@@ -2110,12 +2110,14 @@ async def ws_term(req):
                 ip=req.remote, size=f"{cols}x{rows}")
     shown = wid  # the window this view shows (changes with "select")
 
-    async def leave_scroll():
-        """Typing (or claiming the screen) while the pane sits in copy-mode: leave it first, like a terminal
-        that jumps back to the bottom when you type. Otherwise the keys go to copy-mode, not to claude."""
-        if shell_mode or shown not in b.scrolled:
+    async def leave_scroll(others_only: bool = False):
+        """Typing while the pane sits in copy-mode: leave it first, like a terminal that jumps back to the
+        bottom when you type; otherwise the keys go to copy-mode, not to claude. When a device only takes the
+        screen (others_only), it leaves copy-mode another device left behind, but keeps its own scrolling."""
+        owner = b.scrolled.get(shown)
+        if shell_mode or owner is None or (others_only and owner == view):
             return
-        b.scrolled.discard(shown)
+        b.scrolled.pop(shown, None)
         await b.tmux("if-shell", "-F", "-t", f"{view}:", "#{pane_in_mode}", f"send-keys -t {view}: -X cancel")
 
     try:
@@ -2132,6 +2134,9 @@ async def ws_term(req):
                 elif t == "bin":
                     await leave_scroll()
                     os.write(master, base64.b64decode(m.get("d", "")))
+                elif t == "claim":  # this device is in use: take the window size (focus-in makes it tmux's "latest")
+                    await leave_scroll(others_only=True)
+                    os.write(master, b"\x1b[I")
                 elif t == "ping":  # the browser checks that the socket is still alive (after sleep/resume)
                     await ws.send_str("pong")
                 elif t == "resize":
@@ -2150,7 +2155,7 @@ async def ws_term(req):
                     if count:
                         await b.sh(script)
                         if up:
-                            b.scrolled.add(shown)
+                            b.scrolled[shown] = view
             elif msg.type == WSMsgType.BINARY:
                 os.write(master, msg.data)
     finally:
