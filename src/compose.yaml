@@ -1,0 +1,42 @@
+# docker compose up -d --build
+# Needs on the host: sshd with password login enabled (the console checks your Linux password via
+# SSH and then manages "this machine" over SSH), tmux and Claude Code (`claude`) for each user.
+name: devbox
+
+services:
+  vault:
+    image: hashicorp/vault:1.18.3
+    command: ["server"]
+    cap_add: ["IPC_LOCK"]
+    volumes:
+      - ./vault/vault.hcl:/vault/config/vault.hcl:ro
+      - vault-data:/vault/file
+    restart: unless-stopped
+    # no published ports: only the console talks to Vault
+
+  console:
+    build: .
+    depends_on: [vault]
+    ports:
+      - "${DEVBOX_BIND:-0.0.0.0}:${DEVBOX_PORT:-7700}:7700"
+    environment:
+      DEVBOX_AUTH: ssh
+      DEVBOX_LOCAL_SSH: ${DEVBOX_LOCAL_SSH:-host.docker.internal:22}
+      DEVBOX_LOCAL_LABEL: ${DEVBOX_LOCAL_LABEL:-devbox}
+      DEVBOX_PUBLIC_URL: ${DEVBOX_PUBLIC_URL:-http://localhost:7700}
+      DEVBOX_USERS: ${DEVBOX_USERS:-}
+      DEVBOX_PROJECTS: ${DEVBOX_PROJECTS:-~}
+      VAULT_ADDR: http://vault:8200
+      # External Vault instead of the bundled one: set VAULT_ADDR + VAULT_TOKEN (+ VAULT_MOUNT).
+      # VAULT_TOKEN: ${VAULT_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - console-data:/data
+    tmpfs:
+      - /run/devbox:mode=0700,uid=1000,gid=1000
+    restart: unless-stopped
+
+volumes:
+  vault-data:
+  console-data:

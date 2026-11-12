@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Fake `ssh` used by the tests.
+
+Only the host name "fakehost" exists. The "remote" command runs locally with HOME=$FAKE_REMOTE_HOME and a
+separate tmux socket (TMUX_SOCK=remote, see the generated tmux wrapper), so remote flows can be tested
+without a real sshd. Auth is emulated: password mode asks SSH_ASKPASS and accepts "secret"; key mode
+requires the key's public half in $FAKE_REMOTE_HOME/.ssh/authorized_keys (or a pasted *.key file).
+"""
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+opts, i = {}, 0
+while i < len(args):
+    a = args[i]
+    if a in ("-F", "-i", "-p"):
+        opts[a] = args[i + 1]; i += 2; continue
+    if a == "-o":
+        k, _, v = args[i + 1].partition("="); opts[k] = v; i += 2; continue
+    if a.startswith("-"):
+        i += 1; continue
+    break
+dest, cmd = args[i], args[i + 1:]
+user, host = dest.split("@")
+if host != "fakehost":
+    sys.stderr.write(f"ssh: connect to host {host} port 22: Connection refused\n"); sys.exit(255)
+home = os.environ["FAKE_REMOTE_HOME"]
+os.makedirs(home, exist_ok=True)
+if opts.get("PubkeyAuthentication") == "no":  # password mode
+    pw = subprocess.run([os.environ["SSH_ASKPASS"]], capture_output=True, text=True).stdout.strip()
+    if pw != "secret":
+        sys.stderr.write(f"{dest}: Permission denied (publickey,password).\n"); sys.exit(255)
+else:  # key mode
+    key = opts.get("-i", "")
+    pub = subprocess.run(["ssh-keygen", "-y", "-f", key], capture_output=True, text=True).stdout.strip() \
+        if os.path.exists(key) else ""
+    pub = " ".join(pub.split()[:2])
+    try:
+        ak = open(os.path.join(home, ".ssh/authorized_keys")).read()
+    except OSError:
+        ak = ""
+    custom_ok = key.endswith(".key") and os.path.exists(key) and "PRIVATE KEY" in open(key).read()
+    if not (pub and pub in ak) and not custom_ok:
+        sys.stderr.write(f"{dest}: Permission denied (publickey).\n"); sys.exit(255)
+env = {**os.environ, "HOME": home, "TMUX_SOCK": "remote", "SHELL": "/bin/bash"}
+env.pop("TMUX", None)
+os.chdir(home)
+if cmd:
+    os.execvpe("bash", ["bash", "-c", " ".join(cmd)], env)
+os.execvpe("bash", ["bash", "-l"], env)

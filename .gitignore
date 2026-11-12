@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+src/.env
+tests/browser/node_modules/
+tests/browser/shots/
+*.log

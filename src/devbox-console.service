@@ -1,0 +1,18 @@
+# /etc/systemd/system/devbox-console.service
+# Runs as root so that any local Linux user can log in with PAM; every tmux/claude/shell process
+# is started with that user's uid. Put a TLS reverse proxy (or Tailscale) in front of it.
+[Unit]
+Description=devbox console (tmux + Claude Code sessions in the browser)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -m devbox_console.app
+WorkingDirectory=/opt/devbox/src
+Environment=DEVBOX_HOST=0.0.0.0
+Environment=DEVBOX_PORT=7700
+Environment=DEVBOX_PUBLIC_URL=https://devbox.example.lan
+# Environment=DEVBOX_USERS=dev,sky
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

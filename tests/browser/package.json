@@ -1,0 +1,8 @@
+{
+  "name": "devbox-console-browser-tests",
+  "private": true,
+  "description": "Playwright smoke + leak/CPU probes, driven by tests/test_browser.py",
+  "dependencies": {
+    "playwright-core": "^1.49.1"
+  }
+}

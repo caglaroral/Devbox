@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""devbox-msg — Team board client for sessions running inside tmux.
+
+  devbox-msg post "metin"            # herkese
+  devbox-msg post --to claude-3 "…"  # bir oturuma (uzak makinedeki için: claude-3@host-id)
+  devbox-msg post --notify --to claude-3 "…"   # ayrıca o pencereye send-keys ile yaz
+  devbox-msg read [--since N] [--mine]
+  devbox-msg who                     # pencereler ve durumları
+
+DEVBOX_URL / DEVBOX_TOKEN come from the tmux global environment (set by the console).
+Sender name = current tmux window name (override with --from).
+"""
+import argparse, json, os, subprocess, sys, time, urllib.request
+
+
+def env(name):
+    v = os.environ.get(name)
+    if v:
+        return v
+    try:  # windows opened before the console started don't have it in their env
+        out = subprocess.run(["tmux", "show-environment", "-g", name], capture_output=True, text=True).stdout.strip()
+        if "=" in out:
+            return out.split("=", 1)[1]
+    except OSError:
+        pass
+    return None
+
+
+def me():
+    """Sender id: tmux window name, plus @host-id on remote machines (matches the board's addressing)."""
+    name = os.environ.get("USER", "cli")
+    if os.environ.get("TMUX"):
+        try:
+            name = subprocess.run(["tmux", "display-message", "-p", "#W"], capture_output=True, text=True).stdout.strip()
+        except OSError:
+            pass
+    host = env("DEVBOX_HOST_ID") or "local"
+    return name if host == "local" else f"{name}@{host}"
+
+
+def call(method, path, body=None):
+    url, tok = env("DEVBOX_URL"), env("DEVBOX_TOKEN")
+    if not url or not tok:
+        sys.exit("DEVBOX_URL / DEVBOX_TOKEN bulunamadı (console çalışıyor mu?)")
+    req = urllib.request.Request(url.rstrip("/") + path, method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="devbox-msg")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("post"); p.add_argument("text", nargs="+"); p.add_argument("--to", default="all")
+    p.add_argument("--from", dest="sender"); p.add_argument("--notify", action="store_true")
+    r = sub.add_parser("read"); r.add_argument("--since", type=int, default=0); r.add_argument("--mine", action="store_true")
+    r.add_argument("--limit", type=int, default=30)
+    sub.add_parser("who")
+    a = ap.parse_args()
+
+    if a.cmd == "post":
+        text = " ".join(a.text)
+        if text == "-":
+            text = sys.stdin.read()
+        m = call("POST", "/api/messages", {"from": a.sender or me(), "to": a.to, "text": text, "deliver": a.notify})
+        print(f"#{m['id']} gönderildi" + (f" (iletildi: {', '.join(m['delivered'])})" if m["delivered"] else ""))
+    elif a.cmd == "read":
+        q = f"?since={a.since}&limit={a.limit}" + (f"&to={me()}" if a.mine else "")
+        for m in call("GET", "/api/messages" + q)["messages"]:
+            t = time.strftime("%H:%M", time.localtime(m["ts"]))
+            print(f"#{m['id']} {t} {m['from']} → {m['to']}: {m['text']}")
+    elif a.cmd == "who":
+        for h in call("GET", "/api/hosts")["hosts"]:
+            for w in call("GET", f"/api/windows?host={h['id']}")["windows"]:
+                addr = w["name"] if h["id"] == "local" else f"{w['name']}@{h['id']}"
+                print(f"{addr:<24} {w['status']:<8} {w['display']}")
+
+
+if __name__ == "__main__":
+    main()
