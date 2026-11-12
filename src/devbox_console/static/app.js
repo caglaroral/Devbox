@@ -105,6 +105,13 @@ term.loadAddon(fit);
 term.loadAddon(new WebLinksAddon.WebLinksAddon());
 try { term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = "11"; } catch {}
 term.open($("#term"));
+// GPU renderer: redrawing the rows on every scroll step is what made scrolling feel heavy on phones (DOM renderer).
+// If the GPU context is lost (backgrounded tab, low memory) xterm falls back to the DOM renderer by itself.
+try {
+  const gl = new WebglAddon.WebglAddon();
+  gl.onContextLoss(() => gl.dispose());
+  term.loadAddon(gl);
+} catch { /* no WebGL: DOM renderer */ }
 // phone keyboards: no autocorrect / suggestions in the terminal. Otherwise at every space the keyboard swaps
 // the word for its "corrected" version, which reaches the terminal as erase + retype. (✎ Type keeps autocorrect.)
 if (term.textarea) for (const [k, v] of Object.entries({ autocorrect: "off", autocapitalize: "off", autocomplete: "off", spellcheck: "false" }))
@@ -332,7 +339,9 @@ const MODE_KEY = "devbox.termMode", LINES_KEY = "devbox.bufferLines", LINES_DEFA
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const bufferMode = () => store.get(MODE_KEY) !== "classic";
 const bufferLines = () => Math.max(1000, Math.min(100000, +store.get(LINES_KEY) || LINES_DEFAULT));
-const scrollGain = () => (isBuf() ? 1 : 1.8); // classic: claude scrolls 1 line per wheel event, so a bit more
+const scrollGain = () => (localScroll() ? 1.4 : 1.8);
+// buffer terminal with a normal screen: scrolling happens in the browser (no server round trip)
+const localScroll = () => S.route === "shell" || (isBuf() && term.buffer.active.type === "normal");
 function showTermSettings() {
   $("#bufLines").value = bufferLines(); $("#bufLinesVal").textContent = bufferLines().toLocaleString();
   $("#classicTerm").checked = !bufferMode();
@@ -362,8 +371,10 @@ showTermSettings();
     const step = (now) => {
       const dt = Math.min(48, now - last); last = now;
       acc += vel * dt; scrollBy();
-      vel *= Math.pow(0.993, dt); // short glide (~0.5 s) …
-      if (Math.abs(vel) > 0.12) glideRaf = requestAnimationFrame(step); else stopGlide(); // … and a clean stop, no slow crawl
+      // local scrolling: a long, native-like glide; remote (classic / full-screen program): short, clean stop
+      const local = localScroll();
+      vel *= Math.pow(local ? 0.9972 : 0.993, dt);
+      if (Math.abs(vel) > (local ? 0.04 : 0.12)) glideRaf = requestAnimationFrame(step); else stopGlide();
     };
     glideRaf = requestAnimationFrame(step);
   }
