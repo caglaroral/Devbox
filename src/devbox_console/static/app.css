@@ -389,3 +389,7 @@ dialog.wide[open] { display: flex; }
 
 .logbox { margin: 0 0 8px; padding: 8px; max-height: 320px; overflow: auto; background: var(--bg-inset); border: 1px solid var(--border);
   border-radius: 6px; font: 11px/1.45 var(--mono); white-space: pre; color: var(--fg-muted); }
+
+/* shells (tmux login shells, not saved) */
+.tree li.sess .sh { font: 700 11px var(--mono); color: var(--fg-muted); margin-right: -2px; }
+.tile.tile-shell { background: var(--bg-active); color: var(--fg); font-family: var(--mono); }

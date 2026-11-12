@@ -27,7 +27,7 @@ const cur = () => S.windows.find((w) => w.name === S.current);
 const hp = (p) => `#/h/${encodeURIComponent(S.hostId)}/${p}`;
 const curHost = () => S.hosts.find((h) => h.id === S.hostId);
 // endpoints that act on one host get ?host=<id>
-const HOST_SCOPED = /^\/(api\/(sessions|windows|dirs|settings|events|upload)|ws\/term)/;
+const HOST_SCOPED = /^\/(api\/(sessions|shells|windows|dirs|settings|events|upload)|ws\/term)/;
 function withHost(path, host = S.hostId) {
   if (!HOST_SCOPED.test(path)) return path;
   return path + (path.includes("?") ? "&" : "?") + "host=" + encodeURIComponent(host);
@@ -414,6 +414,12 @@ function applySnapshot(snap) {
   // the session we look at was started/stopped elsewhere: (re)connect or show the stopped panel
   if (S.route === "term") {
     const w = cur();
+    // the window we look at is gone (e.g. `exit` in a shell): leave instead of showing another tmux window.
+    // Only once it was seen: a late snapshot from before the window existed must not count.
+    if (w) applySnapshot.seen = `${S.hostId}/${S.current}`;
+    else if (S.current && applySnapshot.seen === `${S.hostId}/${S.current}`) {
+      applySnapshot.seen = null; closeWs(); toast(`${S.current} closed`); go("#/sessions"); return;
+    }
     if (w?.running && (!ws || wsKind !== "tmux")) { overlay(null); connect(); }
     else if (w && !w.running && ws) { closeWs(); showStopped(w); }
   }
@@ -443,6 +449,15 @@ function openSession(name, host = S.hostId) {
   go(termHash(host, name));
 }
 
+// "Shell": a login shell in tmux on that host (not saved). Listed with the sessions, so you can come back to it.
+async function openShell(host = S.hostId) {
+  try {
+    const r = await api("/api/shells", { method: "POST", body: {}, host });
+    applySnapshot(r);
+    go(termHash(host, r.name));
+  } catch (e) { toast(e.message); }
+}
+
 async function hideSession(name, hidden = true, host = S.hostId) {
   try {
     applySnapshot(await sessApi(name, "/hide", { method: "POST", body: { hidden }, host }));
@@ -455,6 +470,10 @@ async function hideSession(name, hidden = true, host = S.hostId) {
 let clName = null, clHost = null;
 function closeAsk(name, host = S.hostId) {
   const w = findWin(name, host); if (!w) return;
+  if (w.shell) { // nothing to keep: a shell is not saved
+    if (confirm(`Close ${w.display}? The shell and anything running in it end.`)) deleteSession(name, true, host);
+    return;
+  }
   clName = name; clHost = host;
   $("#clTitle").textContent = `Close ${w.display}`;
   $("#clInfo").textContent = w.running
@@ -491,7 +510,7 @@ function openManage() {
   $("#mgSend").value = "";
   $$("#manageDlg [data-mg]").forEach((b) => {
     const needsRun = ["interrupt", "restart", "send", "text"].includes(b.dataset.mg);
-    b.disabled = (needsRun && !w.running) || (w.external && ["edit", "restart", "resume"].includes(b.dataset.mg));
+    b.disabled = (needsRun && !w.running) || ((w.external || w.shell) && ["edit", "restart", "resume"].includes(b.dataset.mg));
   });
   $("#manageDlg").showModal();
 }
@@ -625,8 +644,9 @@ $("#sessForm").addEventListener("submit", async (e) => {
       if (start) openSession(name, host);
     } else {
       const was = findWin(edName, host);
-      applySnapshot(await sessApi(edName, "", { method: "PATCH", body: { ...body, new_name: name }, host }));
+      const snap = await sessApi(edName, "", { method: "PATCH", body: { ...body, new_name: name }, host });
       if (S.current === edName && host === S.hostId) { S.current = name; if (S.route === "term") history.replaceState(null, "", termHash(host, name)); }
+      applySnapshot(snap);
       closeEditor(); toast("Saved");
       if (start && was && !was.running) await startSession(name, true, host);
     }
@@ -651,7 +671,7 @@ function hostDot(h) {
 }
 function hostSessions(h) {
   // the selected host has fresher data (its own snapshot stream); others come from the host summaries
-  if (h.id === S.hostId) return S.windows.map((w) => ({ name: w.name, display: w.display, status: w.status, running: w.running, cwd: w.cwd, hidden: w.hidden }));
+  if (h.id === S.hostId) return S.windows.map((w) => ({ name: w.name, display: w.display, status: w.status, running: w.running, cwd: w.cwd, hidden: w.hidden, shell: w.shell }));
   return h.sessions || [];
 }
 function renderHosts() {
@@ -668,7 +688,7 @@ function renderHosts() {
     </li>` + (sess.length ? sess.map((x) => `
     <li class="sess s-${x.status} ${x.running ? "" : "off"} ${S.route === "term" && h.id === S.hostId && x.name === S.current ? "active" : ""}"
         data-host="${esc(h.id)}" data-name="${esc(x.name)}" title="${esc(STATUS_LABEL[x.status] || x.status)}${x.cwd ? " · " + esc(shortPath(x.cwd)) : ""}">
-      <span class="dot"></span><span class="nm">${esc(x.display)}</span>
+      <span class="dot"></span>${x.shell ? '<span class="sh">$</span>' : ""}<span class="nm">${esc(x.display)}</span>
     </li>`).join("") : `<li class="empty-sess">${h.error ? "cannot connect" : "no sessions"}</li>`)
       + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} hidden (running)</li>` : "");
   }).join(""));
@@ -709,7 +729,7 @@ function renderHostCards() {
         ${h.remote ? `<span class="pill">${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
         <span class="grow"></span>
         ${h.remote ? `<button class="btn danger" data-ha="delete">Delete</button><button class="btn" data-ha="test">Test</button>` : ""}
-        <button class="btn" data-ha="shell">${h.remote ? "SSH" : "Shell"}</button>
+        <button class="btn" data-ha="shell" title="Login shell on this host in tmux — not saved; come back to it any time, exit closes it">Shell</button>
         <button class="btn primary" data-ha="sessions">Sessions</button>
       </div>
     </div>`;
@@ -720,7 +740,7 @@ $("#hostCards").addEventListener("click", async (e) => {
   const id = card.dataset.hid, a = e.target.closest("[data-ha]")?.dataset.ha || "sessions";
   const enc = encodeURIComponent(id);
   if (a === "edit") return openHostEditor(id);
-  if (a === "shell") return go(`#/h/${enc}/shell`);
+  if (a === "shell") return openShell(id);
   if (a === "sessions") return go(`#/h/${enc}/sessions`);
   if (a === "test") {
     const b = e.target.closest("button"); b.disabled = true; b.textContent = "Testing…";
@@ -816,7 +836,7 @@ $("#hTest").onclick = async () => {
   } catch (err) { renderHostInfo({ error: err.message }); toast("Connection failed"); }
   b.disabled = false; b.textContent = "Test connection";
 };
-$("#hShell").onclick = () => { const id = hEditing; closeHostEditor(); go(`#/h/${encodeURIComponent(id)}/shell`); };
+$("#hShell").onclick = () => { const id = hEditing; closeHostEditor(); openShell(id); };
 $("#hDelete").onclick = async () => {
   const h = S.hosts.find((x) => x.id === hEditing);
   if (!confirm(`Remove "${h?.label}" from the list?\ntmux sessions on the remote host are not touched; saved session definitions also stay in this console.`)) return;
@@ -900,11 +920,10 @@ function renderSidebar() {
 function renderHead() {
   $("#manageBtn").classList.toggle("hidden", S.route === "shell");
   if (S.route === "shell") {
-    const remote = S.hostId !== "local";
-    $("#tDisplay").textContent = remote ? `SSH · ${S.host}` : "Shell"; $("#tName").textContent = `${S.login}@${S.host}`;
-    $("#tStatus").className = "status s-shell"; $("#tStatus").innerHTML = `<span class="dot"></span>${remote ? "ssh login shell (outside tmux)" : "login shell (outside tmux)"}`;
+    $("#tDisplay").textContent = `Shell · ${S.host}`; $("#tName").textContent = `${S.login}@${S.host}`;
+    $("#tStatus").className = "status s-shell"; $("#tStatus").innerHTML = `<span class="dot"></span>login shell (outside tmux)`;
     $("#tProvider").textContent = ""; $("#tPath").textContent = "";
-    document.title = `${remote ? "SSH" : "Shell"} · ${S.host} · devbox`;
+    document.title = `Shell · ${S.host} · devbox`;
     return;
   }
   const w = cur(); if (!w) return;
@@ -936,9 +955,9 @@ function cardHTML(w, hid) {
   return `
     <div class="card s-${w.status} ${w.running ? "" : "off"} ${w.hidden ? "hidden-card" : ""}" data-host="${esc(hid)}" data-name="${esc(w.name)}">
       <div class="card-head">
-        <span class="tile">${esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
-        <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.saved || w.external ? "" : " · unsaved"}</span></div>
-        ${w.external ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
+        <span class="tile ${w.shell ? "tile-shell" : ""}">${w.shell ? "$" : esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
+        <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.shell ? " · shell, not saved" : w.saved || w.external ? "" : " · unsaved"}</span></div>
+        ${w.external || w.shell ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
         <button class="icon-btn" data-act="close" title="Close / hide">✕</button>
       </div>
       <div class="card-path" title="${esc(w.cwd)}">▭ ${esc(shortPath(w.cwd) || "—")}</div>
@@ -972,7 +991,7 @@ function groupHead(h, wins) {
       ${err ? `<span class="danger-text small">${esc(err)}</span>` : ""}
       ${miss.length ? `<span class="small">⚠ Missing: <b>${miss.join(", ")}</b></span>` : ""}
       <span class="grow"></span>
-      <button class="btn" data-ga="shell">${h.remote ? "SSH" : "Shell"}</button>
+      <button class="btn" data-ga="shell" title="Login shell on this host in tmux — not saved; come back to it any time, exit closes it">Shell</button>
       <button class="btn" data-ga="new">＋ New<span class="hide-mobile"> session</span></button>
     </div>`;
 }
@@ -1019,7 +1038,7 @@ $("#cards").addEventListener("click", async (e) => {
   if (ga) {
     const hid = ga.closest("[data-host]").dataset.host;
     if (ga.dataset.ga === "new") return openEditor(null, hid);
-    if (ga.dataset.ga === "shell") return go(`#/h/${encodeURIComponent(hid)}/shell`);
+    if (ga.dataset.ga === "shell") return openShell(hid);
     return;
   }
   const card = e.target.closest(".card"); if (!card) return;
@@ -1172,7 +1191,7 @@ function renderPalette() {
     ...(S.hosts.length ? S.hosts : [{ id: S.hostId }]).flatMap((h) => hostWindows(h.id).map((w) => ({
       label: w.display + (w.hidden ? " (hidden)" : ""), dot: w.status, run: () => openSession(w.name, h.id),
       k: `${w.name}${S.hosts.length > 1 ? " @" + hostLabel(h.id) : ""} · ${STATUS_LABEL[w.status] || ""} · ${shortPath(w.cwd)}` }))),
-    { label: S.hostId === "local" ? "Shell" : `SSH · ${S.host}`, k: `${S.login}@${S.host}`, run: () => go(hp("shell")) },
+    ...(S.hosts.length ? S.hosts : [{ id: S.hostId, label: S.host }]).map((h) => ({ label: `New shell on ${h.label}`, k: "command", run: () => openShell(h.id) })),
     ...S.hosts.filter((h) => h.id !== S.hostId).map((h) => ({ label: `Host: ${h.label}`, k: `${h.username}@${h.hostname}`, run: () => go(`#/h/${encodeURIComponent(h.id)}/sessions`) })),
     { label: "Add remote host…", k: "command", run: () => openHostEditor() },
     { label: "New session…", k: "command", run: () => openEditor() },

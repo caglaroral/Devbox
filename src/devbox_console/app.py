@@ -474,9 +474,11 @@ class Box:
         for w in self.windows:
             live.add(w["name"])
             rec = recs.get(w["name"]) or {}
+            shell = not rec and not w["external"] and bool(SHELL_NAME_RE.fullmatch(w["name"]))
             items.append({
-                **w, "running": True, "saved": w["name"] in recs, "hidden": w["name"] in hidden,
-                "display": rec.get("display") or (f"{w['window_name']} ({w['tmux_session']})" if w["external"] else w["name"]),
+                **w, "running": True, "saved": w["name"] in recs, "hidden": w["name"] in hidden, "shell": shell,
+                "display": rec.get("display") or (f"{w['window_name']} ({w['tmux_session']})" if w["external"] else
+                                                  f"Shell {w['name'][6:]}" if shell else w["name"]),
                 "provider": rec.get("provider", ""),
                 "cwd": rec.get("cwd") or w["start_path"], "command": rec.get("command", ""),
                 "autostart": bool(rec.get("autostart")),
@@ -485,7 +487,7 @@ class Box:
             if name in live:
                 continue
             items.append({
-                "id": None, "index": 10_000, "name": name, "running": False, "saved": True, "status": "stopped",
+                "id": None, "index": 10_000, "name": name, "running": False, "saved": True, "status": "stopped", "shell": False,
                 "hidden": name in hidden, "external": False, "tmux_session": SESSION,
                 "display": rec.get("display") or name, "provider": rec.get("provider", ""),
                 "cwd": rec.get("cwd", ""), "path": rec.get("cwd", ""), "command": rec.get("command", ""),
@@ -505,7 +507,7 @@ class Box:
                 "waiting": sum(w["status"] == "waiting" for w in run),
                 "saved": len(self.load_sessions()["sessions"]), "last_ok": self.last_ok,
                 "sessions": [{"name": w["name"], "display": w["display"], "status": w["status"], "running": w["running"],
-                              "hidden": w["hidden"], "external": w["external"]}
+                              "hidden": w["hidden"], "external": w["external"], "shell": w["shell"]}
                              for w in self.snapshot()["windows"]],
                 "info": (self.host or {}).get("info", {}), "auth": self.user.host_auth(self.id) if self.via_ssh else "local"}
 
@@ -526,8 +528,9 @@ class Box:
                            for k, v in self.session_env().items())
         await self.sh(script)
 
-    async def start_window(self, name: str, cwd: str, cmd: str) -> str:
-        """Open tmux window `name` in `cwd` running `cmd` (claude) through a login shell."""
+    async def start_window(self, name: str, cwd: str, cmd: str, keep: bool = True) -> str:
+        """Open tmux window `name` in `cwd` running `cmd` (claude) through a login shell.
+        keep=False (shells): the window goes away when the program exits instead of staying as "dead"."""
         fmt = ["-P", "-F", "#{window_id}", "-n", name, "-c", cwd, *self.window_env_args()]
         if await self.has_session():
             args = ["new-window", "-d", "-t", f"={SESSION}:", *fmt]
@@ -536,7 +539,7 @@ class Box:
         if cmd:
             args.append(login_cmd(cmd))
         wid = (await self.tmux(*args, check=True)).strip()
-        if WID_RE.fullmatch(wid):
+        if WID_RE.fullmatch(wid) and keep:
             # keep the window when claude exits: status becomes "dead" and the page offers Restart
             await self.tmux("set-option", "-w", "-t", wid, "remain-on-exit", "on")
         await self.apply_env()
@@ -1233,6 +1236,29 @@ async def api_create_session(req):
     return web.json_response({**b.snapshot(), "created": wid})
 
 
+SHELL_NAME_RE = re.compile(r"^shell-\d+$")
+
+
+async def api_create_shell(req):
+    """A login shell in tmux on this host: not saved (no record, no autostart), listed like any window so the
+    browser can come back to it; `exit` closes the window and it disappears from the list."""
+    b = B(req)
+    body = await req.json() if req.can_read_body else {}
+    cwd = await b.resolve_dir(str(body.get("cwd") or "~"))
+    if not cwd:
+        raise web.HTTPBadRequest(text="folder not found")
+    await b.poll_once()
+    used = {w["name"] for w in b.windows} | set(b.load_sessions()["sessions"])
+    n = 1
+    while f"shell-{n}" in used:
+        n += 1
+    name = f"shell-{n}"
+    wid = await b.start_window(name, cwd, "", keep=False)
+    b.user.log.write("shell.open", host=b.id, name=name, cwd=cwd)
+    await b.poll_once()
+    return web.json_response({**b.snapshot(), "created": wid, "name": name})
+
+
 async def api_update_session(req):
     """Edit a session; also adopts a live unsaved window (saves it). Renaming renames the tmux window."""
     b, name, body = B(req), name_of(req), await req.json()
@@ -1769,6 +1795,7 @@ def make_app() -> web.Application:
     r.add_get("/api/windows", api_windows)
     r.add_get("/api/sessions", api_windows)
     r.add_post("/api/sessions", api_create_session)
+    r.add_post("/api/shells", api_create_shell)
     r.add_patch("/api/sessions/{name}", api_update_session)
     r.add_delete("/api/sessions/{name}", api_delete_session)
     r.add_post("/api/sessions/{name}/start", api_start_session)
