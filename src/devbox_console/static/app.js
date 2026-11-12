@@ -480,6 +480,24 @@ term.attachCustomWheelEventHandler?.((e) => {
   return false;
 });
 
+/* "↓ Jump to bottom" when scrolled up in the terminal's own buffer (claude's full-screen mode had one) */
+let newWhileUp = false;
+function updateJump() {
+  const b = term.buffer.active, up = isTermRoute() && b.type === "normal" && b.baseY - b.viewportY > 3;
+  if (!up) newWhileUp = false;
+  const btn = $("#jumpBottom");
+  btn.classList.toggle("hidden", !up);
+  btn.textContent = newWhileUp ? "↓ New output" : "↓ Jump to bottom";
+  btn.classList.toggle("new", newWhileUp);
+}
+term.onScroll(updateJump);
+term.onWriteParsed(() => {
+  const b = term.buffer.active;
+  if (b.baseY - b.viewportY > 3 && !newWhileUp) { newWhileUp = true; updateJump(); }
+});
+$("#jumpBottom").addEventListener("pointerdown", (e) => e.preventDefault()); // keep the keyboard as it is
+$("#jumpBottom").addEventListener("click", (e) => { e.stopPropagation(); term.scrollToBottom(); newWhileUp = false; updateJump(); });
+
 /* keybar */
 const KEYS = { esc: "\x1b", tab: "\t", shifttab: "\x1b[Z", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D", enter: "\r", ctrlc: "\x03" };
 function setCtrl(on) { ctrlArmed = on; $("#ctrlKey").classList.toggle("on", on); }

@@ -11,6 +11,8 @@ Tarayıcıdan (mobil dahil) **Claude Code** oturumlarını yöneten web konsolu.
 - **Gizli bilgiler:** Host parolaları/anahtarları ve API anahtarları HashiCorp Vault'ta tutulur.
 - **Görünüm:** GitHub renkleri; mobilde çekmece menü, tuş çubuğu, kopyala/yapıştır.
 
+Ayrıntılı (İngilizce) dokümantasyon: **[docs/](docs/README.md)** — kullanım kılavuzu, mimari, API, işletim ve sürüm notları.
+
 ## Hızlı başlangıç
 
 ```bash

@@ -502,3 +502,9 @@ dialog.wide[open] { display: flex; }
   .cm-s-devbox .cm-def { color: #8250df; } .cm-s-devbox .cm-variable-2, .cm-s-devbox .cm-variable-3, .cm-s-devbox .cm-type { color: #953800; }
   .cm-s-devbox .cm-tag { color: #116329; }
 }
+
+/* ↓ Jump to bottom (scrolled up in the terminal buffer) */
+#jumpBottom { position: absolute; right: 14px; bottom: 12px; z-index: 7; padding: 6px 12px; border-radius: 16px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-subtle); color: var(--fg); font: 12px var(--font); box-shadow: var(--shadow); }
+#jumpBottom:hover { border-color: var(--accent); }
+#jumpBottom.new { background: var(--accent); border-color: var(--accent); color: #fff; }
