@@ -43,13 +43,6 @@ Host makinede gerekenler:
 - `sshd` çalışıyor ve **parola ile giriş açık** olmalı. Giriş ekranı, kullanıcı adı/parolayı host'un sshd'sine (yani PAM'e) sordurur; Proxmox'taki "Linux PAM" girişi gibi.
 - Her kullanıcı için `tmux` ve `claude` kurulu olmalı.
 
-Makine açılışında başlatmak için (konteynerler zaten `restart: unless-stopped`; bu servis elle durdurulmuş yığını da kaldırır):
-
-```bash
-sudo cp devbox-compose.service /etc/systemd/system/devbox.service   # WorkingDirectory'yi düzenleyin
-sudo systemctl daemon-reload && sudo systemctl enable --now devbox
-```
-
 Konteyner, "bu makine"yi de `host.docker.internal:22` üzerinden SSH ile, giriş yapan kullanıcı olarak yönetir. İlk girişte o kullanıcının `~/.ssh/authorized_keys` dosyasına konsolun anahtarı eklenir. Parola saklanmaz.
 
 Önüne TLS'li bir reverse proxy (ya da Tailscale) koyun. Pano kopyalama gibi tarayıcı API'leri HTTPS ister; HTTP'de de yedek yollar çalışır.
