@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.10
+- Phone: tapping **↓ Jump to bottom** no longer opens the keyboard.
+
 ## v0.7.9
 - Name shown as **Devbox** (sidebar, browser tab; the tab shows `<session> · Devbox` in a terminal).
 

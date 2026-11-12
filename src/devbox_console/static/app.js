@@ -384,7 +384,7 @@ showTermSettings();
   const lineH = () => fontSize * 1.2;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   el.addEventListener("touchstart", (e) => {
-    if (e.target.closest(".stopped-box")) return;
+    if (e.target.closest(".stopped-box, #jumpBottom")) return; // their own taps: no scroll, no keyboard
     moved = false; stopGlide(); vel = 0; t0 = performance.now();
     if (e.touches.length === 2) { pinch0 = dist(e.touches); f0 = fontSize; y0 = null; }
     else if (e.touches.length === 1) {
@@ -409,7 +409,7 @@ showTermSettings();
     e.preventDefault();
   }, { passive: false, capture: true });
   el.addEventListener("touchend", (e) => {
-    if (e.target.closest(".stopped-box")) return;
+    if (e.target.closest(".stopped-box, #jumpBottom")) return; // their own taps: no scroll, no keyboard
     cancelLP();
     if (pinch0) { pinch0 = null; setFont(fontSize); }
     y0 = null;
