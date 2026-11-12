@@ -182,6 +182,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chips button { background: var(--accent-muted); color: var(--accent-fg); border: 0; border-radius: 12px; padding: 2px 10px;
   font: 12px var(--mono); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.mg-tools { display: none; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.mg-tools .btn { flex: 1; }
 .inline { display: flex; gap: 8px; }
 .inline input { flex: 1; font-family: var(--mono); }
 dialog { background: var(--bg-subtle); color: var(--fg); border: 1px solid var(--border); border-radius: 12px;
@@ -221,6 +223,7 @@ dialog.wide[open] { display: flex; }
 }
 @media (max-width: 820px) {
   .only-mobile { display: inline-block; }
+  .only-mobile-flex { display: flex; }
   .hide-mobile { display: none; }
   #sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; width: min(300px, 85vw); transform: translateX(-100%);
     transition: transform .2s ease; box-shadow: var(--shadow); }
@@ -393,3 +396,18 @@ dialog.wide[open] { display: flex; }
 /* shells (tmux login shells, not saved) */
 .tree li.sess .sh { font: 700 11px var(--mono); color: var(--fg-muted); margin-right: -2px; }
 .tile.tile-shell { background: var(--bg-active); color: var(--fg); font-family: var(--mono); }
+
+/* "sized for another screen" bar on top of the terminal */
+#sizeBar { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); z-index: 6; max-width: calc(100% - 16px);
+  padding: 5px 12px; border-radius: 14px; border: 1px solid rgba(210,153,34,.5); background: rgba(33,26,8,.92);
+  color: var(--fg); font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sizeBar b { color: #e3b341; }
+/* conversations dialog */
+.conv-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
+.conv-list li { display: flex; gap: 10px; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--border-muted); }
+.conv-list .cv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.conv-list .cv-main b, .conv-list .cv-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-list .cv-meta { font: 11px var(--mono); color: var(--fg-subtle); }
+.conv-list li.cur { background: var(--accent-muted); border-radius: 6px; }
+.conv-list .cv-act { display: flex; gap: 6px; flex: none; }
+@media (max-width: 820px) { .conv-list li { flex-wrap: wrap; } .conv-list .cv-act { width: 100%; justify-content: flex-end; } }

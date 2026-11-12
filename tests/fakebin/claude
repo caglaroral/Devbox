@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Fake `claude` for the tests: just enough of the real CLI's conversation handling.
+
+--session-id X / --resume Y [--fork-session] / --continue pick the conversation; the transcript goes to
+~/.claude/projects/<cwd with non-alphanumerics as ->/<id>.jsonl like Claude Code; the SessionStart hooks from
+--settings run with {"session_id": …, "source": …} on stdin. Typing "/clear" switches to a new conversation
+(and runs the hook again, source=clear). Prints "FAKECLAUDE id=<id> args=<args>" so tests can see what ran.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import uuid
+
+args = sys.argv[1:]
+
+
+def opt(name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+proj = os.path.join(os.path.expanduser("~"), ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", os.getcwd()))
+os.makedirs(proj, exist_ok=True)
+
+if opt("--resume"):
+    if not os.path.exists(os.path.join(proj, opt("--resume") + ".jsonl")):
+        print(f"No conversation found with session ID: {opt('--resume')}", flush=True)
+        sys.exit(1)
+    cid, source = (str(uuid.uuid4()) if "--fork-session" in args else opt("--resume")), "resume"
+elif "--continue" in args or "-c" in args:
+    files = sorted((f for f in os.listdir(proj) if f.endswith(".jsonl")),
+                   key=lambda f: os.path.getmtime(os.path.join(proj, f)))
+    cid, source = (files[-1][:-6] if files else str(uuid.uuid4())), "resume"
+else:
+    cid, source = opt("--session-id") or str(uuid.uuid4()), "startup"
+
+
+def hooks(cid, source):
+    s = opt("--settings")
+    if not s:
+        return
+    for group in json.loads(s).get("hooks", {}).get("SessionStart", []):
+        for h in group.get("hooks", []):
+            subprocess.run(["sh", "-c", h["command"]], input=json.dumps(
+                {"session_id": cid, "source": source, "cwd": os.getcwd(), "hook_event_name": "SessionStart"}).encode())
+
+
+def say(cid, text):
+    with open(os.path.join(proj, cid + ".jsonl"), "a") as f:
+        f.write(json.dumps({"type": "user", "sessionId": cid, "message": {"role": "user", "content": text}}, separators=(",", ":")) + "\n")
+
+
+hooks(cid, source)
+say(cid, f"hello from {cid[:8]}")
+print(f"FAKECLAUDE id={cid} args={' '.join(a for a in args if not a.startswith('{'))}", flush=True)
+for line in sys.stdin:
+    if line.strip() == "/clear":
+        cid = str(uuid.uuid4())
+        hooks(cid, "clear")
+        say(cid, f"after clear {cid[:8]}")
+        print(f"FAKECLAUDE id={cid} cleared", flush=True)
+    elif line.strip():
+        say(cid, line.strip())

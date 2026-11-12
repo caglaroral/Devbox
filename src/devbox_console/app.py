@@ -50,6 +50,7 @@ import subprocess
 import tempfile
 import termios
 import time
+import uuid
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
@@ -223,7 +224,7 @@ SEP = "<~dvb~>"  # tmux escapes control chars in -F output, so use a printable s
 WIN_FMT = SEP.join([
     "#{window_id}", "#{window_index}", "#{window_name}", "#{pane_current_path}",
     "#{pane_current_command}", "#{pane_title}", "#{window_activity}", "#{pane_dead}", "#{pane_start_path}",
-    "#{session_name}", "#{session_group}",
+    "#{session_name}", "#{session_group}", "#{window_width}", "#{window_height}",
 ])
 EXT_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,40}~[A-Za-z0-9_.\-@]{1,40}$")  # "<tmux session>~<window>"
 SPINNER_RE = re.compile(r"^\s*[✻✶✳✢✽✺·*◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\S+…", re.M)
@@ -255,6 +256,113 @@ def classify(text: str, cmd: str, changed: bool) -> str:
     if cmd in SHELLS:
         return "shell"
     return "idle"
+
+
+# ---------------------------------------------------------------- claude conversations
+
+CLAUDE_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+CONV_FLAGS = {"-c", "--continue", "-r", "--resume", "--session-id", "--fork-session"}
+# SessionStart hook passed with --settings (only for this launch; the user's ~/.claude is not touched): claude
+# reports the conversation it is in, also after /clear or its own /resume, so Resume opens the right one.
+CLAUDE_HOOK = ('k="$DEVBOX_SESSION_KEY"; [ -n "$k" ] || exit 0; d="$HOME/.devbox/claude"; '
+               'mkdir -p "$d" && cat > "$d/$k.json"')
+CLAUDE_SETTINGS = json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": CLAUDE_HOOK}]}]}},
+                             separators=(",", ":"))
+# $1 = project dir name under ~/.claude/projects: newest transcripts with what is needed for the list
+CONV_LIST_SH = r"""
+d="$HOME/.claude/projects/$1"
+[ -d "$d" ] || exit 0
+ls -t "$d" 2>/dev/null | grep '\.jsonl$' | head -60 | while read -r n; do
+  f="$d/$n"
+  printf '%s' "${n%.jsonl}"
+  stat -c '%Y %s' "$f" 2>/dev/null || stat -f '%m %z' "$f"
+  grep -m1 -E '"type": ?"(custom-title|summary)"' "$f" | cut -c1-3000
+  printf '
+'
+  grep -m20 -E '"type": ?"user"' "$f" | cut -c1-6000
+done
+"""
+
+
+def claude_project_dir(cwd: str) -> str:
+    """Claude Code keeps a folder's transcripts in ~/.claude/projects/<path with every non-alphanumeric as ->."""
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd)
+
+
+def cmd_words(cmd: str) -> list[str]:
+    try:
+        return shlex.split(cmd)
+    except ValueError:
+        return cmd.split()
+
+
+def is_claude_cmd(cmd: str) -> bool:
+    w = cmd_words(cmd)
+    return bool(w) and w[0].rsplit("/", 1)[-1] == "claude" and not CONV_FLAGS & set(w)
+
+
+def _text_of(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+    return ""
+
+
+def _json_line(line: str) -> dict | None:
+    try:
+        v = json.loads(line)
+        return v if isinstance(v, dict) else None
+    except ValueError:
+        return None
+
+
+def _json_str(line: str, keys: tuple[str, ...]) -> str:
+    """First string value of one of `keys` in a JSON line, also when the line is cut short."""
+    j = _json_line(line.strip()) if line.strip() else None
+    if j is not None:
+        return next((str(j[k]) for k in keys if isinstance(j.get(k), str)), "")
+    m = re.search(r'"(?:%s)":"((?:[^"\\]|\\.)*)' % "|".join(map(re.escape, keys)), line)
+    if not m:
+        return ""
+    val = m.group(1)
+    for cut in (val, val[:-1]):  # a cut can leave half an escape sequence at the end
+        try:
+            return json.loads(f'"{cut}"')
+        except ValueError:
+            continue
+    return val
+
+
+def parse_conversations(raw: str) -> list[dict]:
+    out = []
+    for block in raw.split("\x1e")[1:]:
+        parts = block.split("\x1f")
+        if len(parts) < 3 or not CLAUDE_ID_RE.fullmatch(parts[0]):
+            continue
+        # block = <id> \x1f <mtime> <size>\n<title line> \x1f \n<first user lines>
+        cid, (meta, _, title_line), rest = parts[0], parts[1].partition("\n"), parts[2]
+        meta = meta.split()
+        mtime, size = (int(meta[0]), int(meta[1])) if len(meta) >= 2 and meta[0].isdigit() and meta[1].isdigit() else (0, 0)
+        title = _json_str(title_line, ("customTitle", "summary"))
+        prompt = ""
+        for ln in rest.splitlines():
+            if not ln.strip() or '"tool_result"' in ln or '"toolUseResult"' in ln:  # tool output, not a prompt
+                continue
+            j = _json_line(ln)
+            if j is None:  # line was cut at 6000 characters: pull the text out by hand
+                txt = _json_str(ln, ("content", "text"))
+            else:
+                if j.get("isMeta") or j.get("isSidechain"):
+                    continue
+                txt = _text_of((j.get("message") or {}).get("content"))
+            txt = re.sub(r"<(ide_[a-z_]+|system-reminder)>.*?(</\1>|$)", " ", txt, flags=re.S).strip()
+            if txt and not txt.startswith(("<command-", "<local-command", "Caveat:", "[Request interrupted")):
+                prompt = txt
+                break
+        out.append({"id": cid, "mtime": mtime, "size": size, "title": title[:200],
+                    "prompt": re.sub(r"\s+", " ", prompt)[:300]})
+    return out
 
 
 # ---------------------------------------------------------------- a box = one machine of one user
@@ -429,7 +537,9 @@ class Box:
                 else:
                     buf.append(ln)
         wins, now = [], time.time()
-        for wid, idx, wname, path, cmd, title, act, dead, start_path, tsess, _grp in (r[:11] for r in rows):
+        for r in rows:
+            wid, idx, wname, path, cmd, title, act, dead, start_path, tsess, _grp = r[:11]
+            width, height = (int(x) if x.isdigit() else 0 for x in (r[11:13] + ["", ""])[:2])
             external = tsess != SESSION
             if external:
                 wpart = wname if re.fullmatch(r"[A-Za-z0-9_.\-@]{1,40}", wname) else f"@{wid[1:]}"
@@ -453,6 +563,7 @@ class Box:
                 "activity": int(act or 0), "status": status, "last_change": a["last_change"],
                 "preview": lines[-8:], "start_path": start_path,
                 "tmux_session": tsess, "window_name": wname, "external": external,
+                "width": width, "height": height,
             })
         self.windows = sorted(wins, key=lambda w: (w["external"], w["tmux_session"], w["index"]))
         # keep memory flat: forget windows that are gone (saved sessions keep their activity)
@@ -528,10 +639,11 @@ class Box:
                            for k, v in self.session_env().items())
         await self.sh(script)
 
-    async def start_window(self, name: str, cwd: str, cmd: str, keep: bool = True) -> str:
+    async def start_window(self, name: str, cwd: str, cmd: str, keep: bool = True, env: dict | None = None) -> str:
         """Open tmux window `name` in `cwd` running `cmd` (claude) through a login shell.
         keep=False (shells): the window goes away when the program exits instead of staying as "dead"."""
-        fmt = ["-P", "-F", "#{window_id}", "-n", name, "-c", cwd, *self.window_env_args()]
+        fmt = ["-P", "-F", "#{window_id}", "-n", name, "-c", cwd, *self.window_env_args(),
+               *(a for k, v in (env or {}).items() for a in ("-e", f"{k}={v}"))]
         if await self.has_session():
             args = ["new-window", "-d", "-t", f"={SESSION}:", *fmt]
         else:  # first session on this box: create the tmux session with it
@@ -545,19 +657,72 @@ class Box:
         await self.apply_env()
         return wid
 
-    async def start_saved(self, name: str, resume: bool) -> str:
-        rec = self.load_sessions()["sessions"].get(name)
+    # ---- claude conversations of saved sessions
+    async def current_conversation(self, name: str) -> str | None:
+        """The conversation this session is in: what claude last reported through the SessionStart hook
+        (follows /clear and claude's own /resume), else the id we started it with."""
+        s = self.load_sessions()
+        rec = s["sessions"].get(name)
+        if not rec:
+            return None
+        if rec.get("key"):
+            _, out = await self.sh('cat "$HOME/.devbox/claude/$1.json" 2>/dev/null', rec["key"])
+            sid = str((_json_line(out.strip()) or {}).get("session_id", ""))
+            if CLAUDE_ID_RE.fullmatch(sid) and sid != rec.get("claude_id"):
+                rec["claude_id"] = sid
+                self.save_sessions(s)
+        return rec.get("claude_id")
+
+    async def conversation_exists(self, cid: str) -> bool:
+        rc, _ = await self.sh('for f in "$HOME"/.claude/projects/*/"$1".jsonl; do [ -f "$f" ] && exit 0; done; exit 1', cid)
+        return rc == 0
+
+    async def build_claude(self, name: str, resume: bool, conv: str | None = None,
+                           fork: bool = False) -> tuple[str, str, dict]:
+        """(cwd, command, env) to start saved session `name`. A plain `claude` command gets its conversation
+        pinned: --resume <id> (or a new --session-id), plus the hook that reports later switches."""
+        s = self.load_sessions()
+        rec = s["sessions"].get(name)
         if rec is None:
             raise web.HTTPNotFound(text="no saved session")
-        if any(w["name"] == name for w in self.windows):
-            raise web.HTTPConflict(text="session is already running")
         cwd = await self.resolve_dir(rec.get("cwd") or "~")
         if not cwd:
             raise web.HTTPBadRequest(text=f"folder not found: {rec.get('cwd')}")
         cmd = rec.get("command") or ""
-        if resume and cmd.split()[:1] == ["claude"] and "--continue" not in cmd and "-c" not in cmd.split():
-            cmd += " --continue"  # pick the last conversation in this folder back up
-        return await self.start_window(name, cwd, cmd)
+        if not rec.get("key"):
+            rec["key"] = secrets.token_hex(8)
+        if is_claude_cmd(cmd):
+            cid = conv or (await self.current_conversation(name) if resume else None)
+            s = self.load_sessions()  # current_conversation may have saved
+            rec = {**s["sessions"].get(name, rec), "key": rec["key"]}
+            if cid and await self.conversation_exists(cid):
+                cmd += f" --resume {cid}" + (" --fork-session" if fork else "")
+                if not fork:
+                    rec["claude_id"] = cid
+            elif resume and not rec.get("claude_id") and not conv:
+                cmd += " --continue"  # older record, conversation unknown: the folder's latest one
+            else:
+                rec["claude_id"] = str(uuid.uuid4())
+                cmd += f" --session-id {rec['claude_id']}"
+            cmd += " --settings " + shlex.quote(CLAUDE_SETTINGS)
+        s["sessions"][name] = rec
+        self.save_sessions(s)
+        return cwd, cmd, {"DEVBOX_SESSION_KEY": rec["key"]}
+
+    async def start_saved(self, name: str, resume: bool, conv: str | None = None, fork: bool = False) -> str:
+        if self.load_sessions()["sessions"].get(name) is None:
+            raise web.HTTPNotFound(text="no saved session")
+        if any(w["name"] == name for w in self.windows):
+            raise web.HTTPConflict(text="session is already running")
+        cwd, cmd, env = await self.build_claude(name, resume, conv, fork)
+        return await self.start_window(name, cwd, cmd, env=env)
+
+    async def respawn_saved(self, name: str, wid: str, resume: bool, conv: str | None = None,
+                            fork: bool = False) -> None:
+        """Restart claude inside the running window (same window id: open terminals stay attached)."""
+        cwd, cmd, env = await self.build_claude(name, resume, conv, fork)
+        await self.tmux("respawn-pane", "-k", "-t", wid, "-c", cwd, *self.window_env_args(),
+                        *(a for k, v in env.items() for a in ("-e", f"{k}={v}")), login_cmd(cmd), check=True)
 
     async def autostart(self) -> None:
         await self.poll_once()
@@ -1236,6 +1401,71 @@ async def api_create_session(req):
     return web.json_response({**b.snapshot(), "created": wid})
 
 
+def saved_live(b: "Box", name: str) -> tuple[dict, dict | None]:
+    rec = b.load_sessions()["sessions"].get(name)
+    if rec is None:
+        raise web.HTTPNotFound(text="not a saved session")
+    return rec, next((w for w in b.windows if w["name"] == name), None)
+
+
+async def api_restart_session(req):
+    """Restart claude of a saved session: resume=true continues its own conversation, false starts a new one.
+    A running window is respawned in place, a stopped one is started."""
+    b, name, body = B(req), name_of(req), await req.json()
+    _, live = saved_live(b, name)
+    resume = bool(body.get("resume", True))
+    if live:
+        await b.respawn_saved(name, live["id"], resume)
+    else:
+        await b.start_saved(name, resume)
+    b.user.log.write("session.restart", host=b.id, name=name, resume=resume, was_running=bool(live))
+    await b.poll_once()
+    return web.json_response(b.snapshot())
+
+
+async def api_conversations(req):
+    """Claude conversations in the session's folder (newest first) and which one the session is in."""
+    b, name = B(req), name_of(req)
+    rec, live = saved_live(b, name)
+    current = await b.current_conversation(name)
+    _, raw = await b.run(["sh", "-c", CONV_LIST_SH, "sh", claude_project_dir(rec.get("cwd") or "")], timeout=40)
+    return web.json_response({"current": current, "running": bool(live), "cwd": rec.get("cwd"),
+                              "claude": is_claude_cmd(rec.get("command") or ""),
+                              "conversations": parse_conversations(raw)})
+
+
+async def api_conversation_action(req):
+    """resume: switch the session to this conversation; fork: continue it as a new conversation (claude
+    --fork-session); delete: remove its transcript."""
+    b, name, cid, body = B(req), name_of(req), req.match_info["cid"], await req.json()
+    if not CLAUDE_ID_RE.fullmatch(cid):
+        raise web.HTTPBadRequest(text="bad conversation id")
+    rec, live = saved_live(b, name)
+    action = body.get("action")
+    if action in ("resume", "fork"):
+        if not is_claude_cmd(rec.get("command") or ""):
+            raise web.HTTPBadRequest(text="this session does not run plain `claude`")
+        if not await b.conversation_exists(cid):
+            raise web.HTTPNotFound(text="conversation not found")
+        fork = action == "fork"
+        if live:
+            await b.respawn_saved(name, live["id"], True, cid, fork)
+        else:
+            await b.start_saved(name, True, cid, fork)
+    elif action == "delete":
+        if live and await b.current_conversation(name) == cid:
+            raise web.HTTPConflict(text="the session is in this conversation right now; stop it first")
+        d = claude_project_dir(rec.get("cwd") or "")
+        rc, _ = await b.sh('f="$HOME/.claude/projects/$1/$2"; [ -f "$f.jsonl" ] || exit 3; rm -f "$f.jsonl"; rm -rf "$f"', d, cid)
+        if rc:
+            raise web.HTTPNotFound(text="conversation not found")
+    else:
+        raise web.HTTPBadRequest(text="unknown action")
+    b.user.log.write("conversation." + action, host=b.id, name=name, id=cid)
+    await b.poll_once()
+    return web.json_response(b.snapshot())
+
+
 SHELL_NAME_RE = re.compile(r"^shell-\d+$")
 
 
@@ -1304,10 +1534,12 @@ async def api_delete_session(req):
     if live:
         await b.tmux("kill-window", "-t", live["id"], check=True)
     s = b.load_sessions()
-    s["sessions"].pop(name, None)
+    old = s["sessions"].pop(name, None)
     s["hidden"] = [n for n in s.get("hidden", []) if n != name]
     b.save_sessions(s)
     b.activity.pop(name, None)
+    if (old or {}).get("key"):
+        await b.sh('rm -f "$HOME/.devbox/claude/$1.json"', old["key"])
     b.user.log.write("session.delete", host=b.id, name=name)
     await b.poll_once()
     return web.json_response(b.snapshot())
@@ -1640,7 +1872,9 @@ async def ws_term(req):
             # browser tab can look at a different window. destroy-unattached removes it on close.
             targs = ["tmux", "new-session", "-t", f"={tsess}", "-s", view,
                      ";", "set-option", "-t", view, "destroy-unattached", "on",
-                     ";", "set-option", "-t", view, "status", "off"]
+                     ";", "set-option", "-t", view, "status", "off",
+                     # blank instead of dots where the window is smaller than this browser (tmux >= 3.3)
+                     ";", "set-option", "-gwq", "fill-character", " "]
             if WID_RE.fullmatch(wid):
                 targs += [";", "select-window", "-t", f"{view}:{wid}"]
             if b.via_ssh:
@@ -1800,6 +2034,9 @@ def make_app() -> web.Application:
     r.add_delete("/api/sessions/{name}", api_delete_session)
     r.add_post("/api/sessions/{name}/start", api_start_session)
     r.add_post("/api/sessions/{name}/stop", api_stop_session)
+    r.add_post("/api/sessions/{name}/restart", api_restart_session)
+    r.add_get("/api/sessions/{name}/conversations", api_conversations)
+    r.add_post("/api/sessions/{name}/conversations/{cid}", api_conversation_action)
     r.add_post("/api/sessions/{name}/hide", api_hide_session)
     r.add_get("/api/windows/{wid}/capture", api_capture)
     r.add_post("/api/windows/{wid}/action", api_window_action)

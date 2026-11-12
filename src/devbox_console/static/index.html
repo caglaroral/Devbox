@@ -59,7 +59,7 @@
         </div>
         <button class="btn" id="manageBtn" title="Manage session">⋯</button>
       </header>
-      <div id="termWrap"><div id="term"></div><div id="termOverlay" class="hidden"></div><div id="dropHint">Drop files to send them to this session</div></div>
+      <div id="termWrap"><div id="sizeBar" class="hidden"></div><div id="term"></div><div id="termOverlay" class="hidden"></div><div id="dropHint">Drop files to send them to this session</div></div>
       <input type="file" id="attachInput" multiple hidden>
       <div id="keybar">
         <button data-key="esc">Esc</button>
@@ -324,12 +324,20 @@
 
 <dialog id="manageDlg">
   <h2 id="mgTitle">Manage session</h2>
+  <div class="mg-tools only-mobile-flex">
+    <button class="btn" data-mg="copy">Copy</button>
+    <button class="btn" data-mg="paste">Paste</button>
+    <button class="btn" data-mg="attach">📎 Attach</button>
+    <button class="btn" data-mg="fontminus">A−</button>
+    <button class="btn" data-mg="fontplus">A+</button>
+  </div>
   <div class="mg-grid">
     <button class="btn" data-mg="interrupt">Send Ctrl‑C</button>
     <button class="btn" data-mg="edit">Edit…</button>
-    <button class="btn" data-mg="restart">Restart</button>
-    <button class="btn" data-mg="resume">Resume (--continue)</button>
-    <button class="btn" data-mg="text">Ekran metni</button>
+    <button class="btn" data-mg="convs">Conversations…</button>
+    <button class="btn" data-mg="text">Screen text</button>
+    <button class="btn" data-mg="restart" title="New claude conversation in the same folder">Restart (new conversation)</button>
+    <button class="btn" data-mg="resume" title="Restart claude in this session's own conversation">Resume</button>
     <button class="btn danger" data-mg="closeask">Close…</button>
   </div>
   <label class="field">Send a prompt / slash command
@@ -347,6 +355,12 @@
     <button class="opt danger" data-cl="delete"><b>Delete</b><span>claude exits and the saved session is deleted. The project folder is not touched.</span></button>
   </div>
   <div class="row-end"><button class="btn" data-cl="cancel">Cancel</button></div>
+</dialog>
+
+<dialog id="convDlg" class="wide">
+  <div class="dlg-head"><h2 id="cvTitle">Conversations</h2><div class="grow"></div><button class="btn" id="cvClose">Close</button></div>
+  <p class="muted small" id="cvInfo"></p>
+  <ul id="cvList" class="conv-list"></ul>
 </dialog>
 
 <dialog id="palette">

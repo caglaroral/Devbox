@@ -144,8 +144,21 @@ function claimSize(gap = 500) {
   const now = Date.now(); if (now - lastClaim < (typeof gap === "number" ? gap : 500)) return;
   lastClaim = now;
   wsSend({ t: "in", d: "\x1b[I" });
+  $("#sizeBar")?.classList.add("hidden"); // the next snapshot shows the new size
 }
 window.addEventListener("focus", () => claimSize());
+
+// One program has one size: when another device was used last, say so (instead of a half-empty screen)
+// and let a click/tap take the size back.
+function updateSizeBar() {
+  const bar = $("#sizeBar"), w = S.route === "term" ? cur() : null;
+  const off = w?.running && w.width && ws && wsKind === "tmux" && (w.width !== term.cols || Math.abs(w.height - term.rows) > 1);
+  bar.classList.toggle("hidden", !off);
+  if (!off) return;
+  const smaller = w.width < term.cols;
+  bar.innerHTML = `Sized for ${smaller ? "a smaller" : "a bigger"} screen (<b>${w.width}×${w.height}</b>) — ${isTouch() ? "tap" : "click"} to fit here`;
+}
+$("#sizeBar").addEventListener("click", (e) => { e.stopPropagation(); claimSize(0); $("#sizeBar").classList.add("hidden"); });
 $("#termWrap").addEventListener("pointerdown", () => claimSize(), true);
 $("#termWrap").addEventListener("mouseenter", () => claimSize());
 $("#termWrap").addEventListener("mousemove", () => claimSize(2000), { passive: true }); // back at the desk
@@ -224,6 +237,7 @@ new ResizeObserver(() => {
   resizeTimer = setTimeout(() => {
     if (!isTermRoute()) return;
     fit.fit(); wsSend({ t: "resize", c: term.cols, r: term.rows });
+    updateSizeBar();
   }, 80);
 }).observe($("#termWrap"));
 
@@ -449,6 +463,59 @@ function openSession(name, host = S.hostId) {
   go(termHash(host, name));
 }
 
+// restart claude of a saved session: resume=true → its own conversation, false → a new one
+async function restartSession(name, resume = true, host = S.hostId) {
+  try {
+    applySnapshot(await sessApi(name, "/restart", { method: "POST", body: { resume }, host }));
+    toast(resume ? "Resumed" : "New conversation started");
+    if (S.route !== "term" || S.current !== name) go(termHash(host, name));
+  } catch (e) { toast(e.message); }
+}
+
+/* claude conversations of a session (transcripts in its folder): resume one, fork one, delete one */
+let cv = { name: null, host: null };
+async function openConversations(name, host = S.hostId) {
+  cv = { name, host };
+  const w = findWin(name, host);
+  $("#cvTitle").textContent = `Conversations · ${w?.display || name}`;
+  $("#cvInfo").textContent = "Loading…"; $("#cvList").innerHTML = "";
+  if (!$("#convDlg").open) $("#convDlg").showModal();
+  try {
+    const r = await sessApi(name, "/conversations", { host });
+    if (cv.name !== name) return;
+    $("#cvInfo").textContent = `Claude conversations in ${shortPath(r.cwd)} on ${hostLabel(host)}, newest first.` +
+      (r.claude ? " Resume switches this session to that conversation (claude restarts); Fork continues it as a new one." :
+        " This session does not run plain `claude`, so it can only list them.");
+    const kb = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`);
+    $("#cvList").innerHTML = r.conversations.map((c) => {
+      const cur = c.id === r.current;
+      return `<li class="${cur ? "cur" : ""}" data-cid="${esc(c.id)}">
+        <div class="cv-main"><b>${esc(c.title || c.prompt || "(no prompt)")}</b>
+          ${c.title && c.prompt ? `<span class="muted small">${esc(c.prompt)}</span>` : ""}
+          <span class="cv-meta">${cur ? "● current · " : ""}${esc(ago(c.mtime))} · ${kb(c.size)} · ${esc(c.id.slice(0, 8))}</span></div>
+        <div class="cv-act">${r.claude ? `${cur && r.running ? "" : `<button class="btn primary" data-cv="resume">Resume</button>`}
+          <button class="btn" data-cv="fork" title="Continue as a new conversation (the original stays as it is)">Fork</button>` : ""}
+          ${cur && r.running ? "" : `<button class="btn danger" data-cv="delete">Delete</button>`}</div>
+      </li>`;
+    }).join("") || `<li class="muted">No conversations in this folder yet.</li>`;
+  } catch (e) { $("#cvInfo").textContent = e.message; }
+}
+$("#cvClose").onclick = () => $("#convDlg").close();
+$("#cvList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-cv]"); if (!b) return;
+  const cid = b.closest("[data-cid]").dataset.cid, a = b.dataset.cv, { name, host } = cv;
+  const w = findWin(name, host);
+  if (a === "delete" && !confirm("Delete this conversation's transcript? This cannot be undone.")) return;
+  if (a !== "delete" && w?.running && !confirm("claude in this session restarts in that conversation. Continue?")) return;
+  b.disabled = true;
+  try {
+    applySnapshot(await api(`/api/sessions/${encodeURIComponent(name)}/conversations/${cid}`, { method: "POST", body: { action: a }, host }));
+    if (a === "delete") { toast("Deleted"); openConversations(name, host); return; }
+    $("#convDlg").close(); toast(a === "fork" ? "Forked — new conversation" : "Resumed");
+    go(termHash(host, name));
+  } catch (err) { toast(err.message); b.disabled = false; }
+});
+
 // "Shell": a login shell in tmux on that host (not saved). Listed with the sessions, so you can come back to it.
 async function openShell(host = S.hostId) {
   try {
@@ -509,8 +576,9 @@ function openManage() {
   $("#mgTitle").textContent = `${w.display} (${w.name})`;
   $("#mgSend").value = "";
   $$("#manageDlg [data-mg]").forEach((b) => {
-    const needsRun = ["interrupt", "restart", "send", "text"].includes(b.dataset.mg);
-    b.disabled = (needsRun && !w.running) || ((w.external || w.shell) && ["edit", "restart", "resume"].includes(b.dataset.mg));
+    const needsRun = ["interrupt", "send", "text", "copy", "paste", "attach"].includes(b.dataset.mg);
+    b.disabled = (needsRun && !w.running) || ((w.external || w.shell) && ["edit", "restart", "resume", "convs"].includes(b.dataset.mg))
+      || (b.dataset.mg === "convs" && !w.saved);
   });
   $("#manageDlg").showModal();
 }
@@ -523,13 +591,16 @@ $("#manageDlg").addEventListener("click", async (e) => {
     if (a === "close") dlg.close();
     if (a === "interrupt") { await winAction({ action: "interrupt" }); toast("Ctrl‑C sent"); }
     if (a === "edit") { dlg.close(); openEditor(w.name, S.hostId); }
-    if ((a === "restart" || a === "resume") && w.running) {
-      if (!confirm("Kill claude and restart it in the same folder?")) return;
-      let cmd = w.command || S.settings?.new_window_command || "claude";
-      if (a === "resume" && cmd.startsWith("claude") && !cmd.includes("--continue")) cmd += " --continue";
-      await winAction({ action: "respawn", command: cmd }); dlg.close(); toast("Restarted");
-    } else if (a === "resume") { dlg.close(); await startSession(w.name, true); }
-    else if (a === "restart") { dlg.close(); await startSession(w.name, false); }
+    if (a === "restart" || a === "resume") {
+      if (w.running && !confirm(a === "restart" ? "Restart claude with a new conversation in the same folder?" : "Restart claude in this session's conversation?")) return;
+      dlg.close(); await restartSession(w.name, a === "resume");
+    }
+    if (a === "convs") { dlg.close(); openConversations(w.name); }
+    if (a === "copy") { dlg.close(); term.hasSelection() ? copyText(term.getSelection()) : openScreenText(); }
+    if (a === "paste") { dlg.close(); pasteFromClipboard(); }
+    if (a === "attach") { dlg.close(); pickFiles(); }
+    if (a === "fontminus") setFont(fontSize - 1);
+    if (a === "fontplus") setFont(fontSize + 1);
     if (a === "text") { dlg.close(); openScreenText(); }
     if (a === "closeask") { dlg.close(); closeAsk(w.name); }
     if (a === "send" && $("#mgSend").value) {
@@ -918,6 +989,7 @@ function renderSidebar() {
 }
 
 function renderHead() {
+  updateSizeBar();
   $("#manageBtn").classList.toggle("hidden", S.route === "shell");
   if (S.route === "shell") {
     $("#tDisplay").textContent = `Shell · ${S.host}`; $("#tName").textContent = `${S.login}@${S.host}`;
@@ -957,6 +1029,7 @@ function cardHTML(w, hid) {
       <div class="card-head">
         <span class="tile ${w.shell ? "tile-shell" : ""}">${w.shell ? "$" : esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
         <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.shell ? " · shell, not saved" : w.saved || w.external ? "" : " · unsaved"}</span></div>
+        ${w.saved && !w.shell ? `<button class="icon-btn" data-act="convs" title="Claude conversations">🕘</button>` : ""}
         ${w.external || w.shell ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
         <button class="icon-btn" data-act="close" title="Close / hide">✕</button>
       </div>
@@ -1050,10 +1123,12 @@ $("#cards").addEventListener("click", async (e) => {
   if (act === "resume") return startSession(name, true, host);
   if (act === "fresh") return startSession(name, false, host);
   if (act === "restart") {
+    if (w.saved) return restartSession(name, true, host);
     try { await api(`/api/windows/${encodeURIComponent(w.id)}/action`, { method: "POST", body: { action: "respawn", command: w.command || "claude" }, host }); toast("Restarted"); }
     catch (err) { toast(err.message); }
     return;
   }
+  if (act === "convs") return openConversations(name, host);
   if (act === "open" || w?.running) return openSession(name, host);
   openEditor(name, host); // a stopped card: show its details
 });

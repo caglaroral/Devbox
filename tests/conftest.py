@@ -49,6 +49,8 @@ class Console:
         (bindir / "tmux").write_text(f'#!/bin/sh\nexec {REAL_TMUX} -L "{self.tmux_label}-${{TMUX_SOCK:-local}}" "$@"\n')
         (bindir / "tmux").chmod(0o755)
         shutil.copy(FAKEBIN / "ssh", bindir / "ssh")
+        shutil.copy(FAKEBIN / "claude", bindir / "claude")
+        self.claude = str(bindir / "claude")  # by full path: login shells reset PATH
         self.path = f"{bindir}:{os.environ.get('PATH', '')}"
         env = {**os.environ, "PATH": self.path, "DEVBOX_PORT": str(self.port), "DEVBOX_DATA": str(self.data),
                "DEVBOX_RUNTIME": str(base / "run"), "DEVBOX_POLL": "1", "DEVBOX_AUTH": "pam",
