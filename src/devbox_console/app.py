@@ -399,6 +399,9 @@ class Box:
         self.dir_cache: dict[str, tuple[float, list[str]]] = {}
         self.poller: asyncio.Task | None = None
         self.last_ok = 0.0
+        # windows a browser scrolled into tmux copy-mode (touch scrolling). Copy-mode belongs to the pane, so it
+        # also freezes every other device's view and swallows typing: the next input from anywhere leaves it.
+        self.scrolled: set[str] = set()
 
     @property
     def remote(self) -> bool:
@@ -2105,6 +2108,16 @@ async def ws_term(req):
     device = "mobile" if re.search(r"Mobi|Android|iPhone|iPad", ua) else "desktop"
     u.log.write("term.open", host=b.id, target="shell" if shell_mode else wid or "-", view=view, device=device,
                 ip=req.remote, size=f"{cols}x{rows}")
+    shown = wid  # the window this view shows (changes with "select")
+
+    async def leave_scroll():
+        """Typing (or claiming the screen) while the pane sits in copy-mode: leave it first, like a terminal
+        that jumps back to the bottom when you type. Otherwise the keys go to copy-mode, not to claude."""
+        if shell_mode or shown not in b.scrolled:
+            return
+        b.scrolled.discard(shown)
+        await b.tmux("if-shell", "-F", "-t", f"{view}:", "#{pane_in_mode}", f"send-keys -t {view}: -X cancel")
+
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -2114,8 +2127,10 @@ async def ws_term(req):
                     continue
                 t = m.get("t")
                 if t == "in":
+                    await leave_scroll()
                     os.write(master, str(m.get("d", "")).encode())
                 elif t == "bin":
+                    await leave_scroll()
                     os.write(master, base64.b64decode(m.get("d", "")))
                 elif t == "ping":  # the browser checks that the socket is still alive (after sleep/resume)
                     await ws.send_str("pong")
@@ -2123,6 +2138,7 @@ async def ws_term(req):
                     set_winsize(master, max(5, int(m["r"])), max(20, int(m["c"])))
                 elif t == "select" and not shell_mode and WID_RE.fullmatch(str(m.get("w", ""))):
                     await b.tmux("select-window", "-t", f"{view}:{m['w']}")
+                    shown = m["w"]
                 elif t == "scroll" and not shell_mode:
                     # touch scrolling: drive tmux copy-mode (-e leaves it again at the bottom)
                     page, n = int(m.get("page", 0) or 0), int(m.get("n", 0) or 0)
@@ -2133,6 +2149,8 @@ async def ws_term(req):
                              f"tmux send-keys -t {view}: -X -N {count} {cmd}"
                     if count:
                         await b.sh(script)
+                        if up:
+                            b.scrolled.add(shown)
             elif msg.type == WSMsgType.BINARY:
                 os.write(master, msg.data)
     finally:

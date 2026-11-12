@@ -84,3 +84,27 @@ def test_restart_tells_terminals_and_keeps_sessions(console):
     console.proc.wait(10)
     assert code == 1012
     assert "keep" in console.tmux("list-windows", "-a", "-F", "#{window_name}").split(), "claude keeps running"
+
+
+def test_typing_leaves_copy_mode_from_another_device(console):
+    """The phone scrolled up (tmux copy-mode, which belongs to the pane) and was left like that: typing on the
+    desktop must reach the program instead of copy-mode (that used to need Stop + Resume)."""
+    proj = str(console.work / "proj-a")
+    console.ok("POST", "/api/sessions", {"name": "cm", "cwd": proj, "command": "bash"})
+    wid = console.window("cm")["id"]
+    url = console.url.replace("http", "ws") + f"/ws/term?window={wid}"
+    in_mode = lambda: console.tmux("display", "-p", "-t", wid, "#{pane_in_mode}").strip()
+
+    async def run():
+        async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
+            async with s.ws_connect(url + "&cols=51&rows=30") as phone, s.ws_connect(url + "&cols=200&rows=50") as desk:
+                await desk.send_str(json.dumps({"t": "in", "d": "seq 1 300\r"}))
+                await read_for(desk, 1.5)
+                await phone.send_str(json.dumps({"t": "scroll", "n": 20}))
+                await asyncio.sleep(0.7)
+                assert in_mode() == "1", "phone scrolled: pane in copy-mode"
+                await desk.send_str(json.dumps({"t": "in", "d": "echo TYPED-$((6*7))\r"}))
+                await asyncio.sleep(1.0)
+                assert in_mode() == "0", "typing on the desktop left copy-mode"
+    asyncio.run(run())
+    assert "TYPED-42" in console.capture("cm", needle="TYPED-42"), "the keys reached the shell"
