@@ -2126,6 +2126,19 @@ async def ws_term(req):
                 ip=req.remote, size=f"{cols}x{rows}")
     shown = wid  # the window this view shows (changes with "select")
 
+    wheel = {"at": 0.0, "on": False}
+
+    async def wants_wheel() -> bool:
+        """Full-screen program that asked for mouse input (claude, vim, less)? Checked at most every 2 s."""
+        if shell_mode:
+            return False
+        if time.monotonic() - wheel["at"] > 2:
+            out = await b.tmux("display-message", "-p", "-t", f"{view}:",
+                               "#{alternate_on} #{mouse_any_flag}#{mouse_button_flag}#{mouse_standard_flag}")
+            alt, flags = (out.split() + ["", ""])[:2]
+            wheel.update(at=time.monotonic(), on=alt == "1" and flags not in ("", "000"))
+        return wheel["on"]
+
     async def leave_scroll(others_only: bool = False):
         """Typing while the pane sits in copy-mode: leave it first, like a terminal that jumps back to the
         bottom when you type; otherwise the keys go to copy-mode, not to claude. When a device only takes the
@@ -2160,6 +2173,7 @@ async def ws_term(req):
                 elif t == "select" and not shell_mode and WID_RE.fullmatch(str(m.get("w", ""))):
                     await b.tmux("select-window", "-t", f"{view}:{m['w']}")
                     shown = m["w"]
+                    wheel["at"] = 0.0  # another program: check again
                 elif t == "scroll" and not shell_mode:
                     # touch / wheel scrolling. A full-screen program (claude, vim, less: alternate screen) keeps
                     # no tmux history, so copy-mode would show "[0/0]": when it asked for mouse input it gets
@@ -2169,7 +2183,11 @@ async def ws_term(req):
                     up = page > 0 or n > 0
                     cmd = ("page-up" if up else "page-down") if page else ("scroll-up" if up else "scroll-down")
                     count = abs(page) or min(abs(n), 200)
-                    if count:
+                    if count and await wants_wheel():
+                        # straight into this view's tmux client: tmux hands the wheel to the program at once,
+                        # no command round trip per swipe step (claude scrolls 1 line per wheel event)
+                        os.write(master, (b"\x1b[<64;10;5M" if up else b"\x1b[<65;10;5M") * min(abs(page) * 10 or abs(n), 60))
+                    elif count:
                         _, how = await b.sh(SCROLL_SH, f"{view}:", "up" if up else "down", str(count),
                                             str(min(abs(page) * 10 or abs(n), 30)), cmd)
                         if up and how.strip() == "copy":

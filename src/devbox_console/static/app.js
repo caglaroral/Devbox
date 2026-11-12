@@ -265,12 +265,31 @@ $("#textBtn").onclick = () => openScreenText();
 (() => {
   const el = $("#termWrap");
   let y0 = null, acc = 0, pinch0 = null, f0 = fontSize, moved = false, lp = null, longPressed = false;
+  let vel = 0, t0 = 0, glideRaf = 0;
+  const scrollBy = () => { // whole lines out of the accumulated finger movement
+    const n = Math.trunc(acc / lineH());
+    if (!n) return;
+    moved = true; acc -= n * lineH();
+    if (S.route === "shell") term.scrollLines(-n); else wsSend({ t: "scroll", n });
+  };
+  const stopGlide = () => { cancelAnimationFrame(glideRaf); glideRaf = 0; };
+  function glide() { // momentum after a flick, like native scrolling
+    stopGlide();
+    let last = performance.now();
+    const step = (now) => {
+      const dt = Math.min(48, now - last); last = now;
+      acc += vel * dt; scrollBy();
+      vel *= Math.pow(0.996, dt); // ~1.5 s to a stop
+      if (Math.abs(vel) > 0.03) glideRaf = requestAnimationFrame(step); else stopGlide();
+    };
+    glideRaf = requestAnimationFrame(step);
+  }
   const cancelLP = () => { clearTimeout(lp); lp = null; };
   const lineH = () => fontSize * 1.2;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   el.addEventListener("touchstart", (e) => {
     if (e.target.closest(".stopped-box")) return;
-    moved = false;
+    moved = false; stopGlide(); vel = 0; t0 = performance.now();
     if (e.touches.length === 2) { pinch0 = dist(e.touches); f0 = fontSize; y0 = null; }
     else if (e.touches.length === 1) {
       y0 = e.touches[0].clientY; acc = 0; longPressed = false;
@@ -285,11 +304,12 @@ $("#textBtn").onclick = () => openScreenText();
       e.preventDefault(); return;
     }
     if (y0 == null) return;
-    const y = e.touches[0].clientY;
+    const y = e.touches[0].clientY, now = performance.now();
+    if (now > t0) vel = 0.8 * ((y - y0) / (now - t0)) + 0.2 * vel; // px/ms, smoothed: the flick speed
+    t0 = now;
     acc += y - y0; y0 = y;
     if (Math.abs(acc) > 8) cancelLP();
-    const n = Math.trunc(acc / lineH());
-    if (n) { moved = true; acc -= n * lineH(); if (S.route === "shell") term.scrollLines(-n); else wsSend({ t: "scroll", n }); }
+    scrollBy();
     e.preventDefault();
   }, { passive: false, capture: true });
   el.addEventListener("touchend", (e) => {
@@ -297,6 +317,7 @@ $("#textBtn").onclick = () => openScreenText();
     cancelLP();
     if (pinch0) { pinch0 = null; setFont(fontSize); }
     y0 = null;
+    if (moved && Math.abs(vel) > 0.25 && performance.now() - t0 < 80) glide(); // flick: keep going, slowing down
     if (!moved && !longPressed) term.focus(); // a tap opens the keyboard
   }, { passive: true });
   el.addEventListener("contextmenu", (e) => { if (isTouch()) e.preventDefault(); });
