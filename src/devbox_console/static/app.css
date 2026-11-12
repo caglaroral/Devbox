@@ -508,6 +508,6 @@ dialog.wide[open] { display: flex; }
   border: 1px solid var(--border); background: var(--bg-subtle); color: var(--fg); font: 12px var(--font); box-shadow: var(--shadow); }
 #jumpBottom:hover { border-color: var(--accent); }
 #jumpBottom.new { background: var(--accent); border-color: var(--accent); color: #fff; }
-/* mobile menu (☰): wider, easier to hit */
-.icon-btn[data-menu] { font-size: 22px; line-height: 1; min-width: 46px; min-height: 38px; padding: 6px 12px;
-  border: 1px solid var(--border); background: var(--bg-subtle); color: var(--fg); }
+/* mobile menu (☰): the icon stretched horizontally (button as before; margin keeps the stretched glyph clear) */
+.icon-btn[data-menu] { transform: scaleX(1.45); margin-left: 4px; margin-right: 4px; }
+.brand .icon-btn[data-menu] { margin-left: auto; }

@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.8
+- ☰ menu icon stretched horizontally (button frame as before v0.7.7).
+
 ## v0.7.7
 - Wider ☰ menu button on phones.
 
