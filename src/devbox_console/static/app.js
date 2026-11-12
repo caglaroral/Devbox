@@ -553,7 +553,7 @@ function closeAsk(name, host = S.hostId) {
   $("#clStopT").textContent = w.external ? "Close window" : "Stop";
   $("#clStopD").textContent = w.external
     ? "The tmux window and the program in it are terminated (kill-window)."
-    : 'claude exits, the saved session stays; "Resume" continues where it left off.';
+    : 'claude and its tmux window close; the session card stays. "Resume" continues the same conversation where it left off.';
   $("#closeDlg").showModal();
 }
 $("#closeDlg").addEventListener("click", async (e) => {
@@ -760,13 +760,23 @@ function renderHosts() {
     <li class="sess s-${x.status} ${x.running ? "" : "off"} ${S.route === "term" && h.id === S.hostId && x.name === S.current ? "active" : ""}"
         data-host="${esc(h.id)}" data-name="${esc(x.name)}" title="${esc(STATUS_LABEL[x.status] || x.status)}${x.cwd ? " · " + esc(shortPath(x.cwd)) : ""}">
       <span class="dot"></span>${x.shell ? '<span class="sh">$</span>' : ""}<span class="nm">${esc(x.display)}</span>
+      <button class="icon-btn tclose" data-tclose title="Close / hide…">✕</button>
     </li>`).join("") : `<li class="empty-sess">${h.error ? "cannot connect" : "no sessions"}</li>`)
       + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} hidden (running)</li>` : "");
   }).join(""));
 }
-$("#hostList").addEventListener("click", (e) => {
+$("#hostList").addEventListener("click", async (e) => {
   const ed = e.target.closest("[data-hedit]");
   if (ed) { e.stopPropagation(); return openHostEditor(ed.dataset.hedit); }
+  const x = e.target.closest("[data-tclose]");
+  if (x) { // ✕ on a tree item: the same "close or only hide?" dialog as on the cards
+    e.stopPropagation();
+    const li = x.closest("[data-name]"), host = li.dataset.host, name = li.dataset.name;
+    if (!findWin(name, host)) { // another host's full list may not be loaded yet
+      try { applySnapshot(await api("/api/windows", { host })); } catch (err) { return toast(err.message); }
+    }
+    return closeAsk(name, host);
+  }
   const li = e.target.closest("[data-host]"); if (!li) return;
   const h = encodeURIComponent(li.dataset.host);
   if (li.dataset.hidden) { setFilter("hidden"); return go(`#/h/${h}/sessions`); }

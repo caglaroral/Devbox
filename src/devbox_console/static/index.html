@@ -25,7 +25,7 @@
       <a href="#/team" data-nav="team"><span class="ico">☺</span>Team<span class="count hidden" id="unread">0</span></a>
       <a href="#/settings" data-nav="settings"><span class="ico">⚙</span>Settings</a>
     </nav>
-    <div class="section-title"><span>Hosts &amp; sessions</span>
+    <div class="section-title"><span>Hosts &amp; Sessions</span>
       <span><button class="icon-btn" id="newSessionBtn" title="New session on the selected host">＋</button><button class="icon-btn" id="newHostBtn" title="Add remote host">⇄＋</button></span></div>
     <ul id="hostList" class="winlist tree"></ul>
     <div class="sidebar-foot">
@@ -350,9 +350,9 @@
   <h2 id="clTitle">Close session</h2>
   <p class="muted small" id="clInfo"></p>
   <div class="close-opts">
-    <button class="opt" data-cl="hide"><b>Only remove from view</b><span>Keeps running on the machine. Bring it back any time from the "Hidden" list.</span></button>
-    <button class="opt" data-cl="stop"><b id="clStopT">Stop</b><span id="clStopD">claude exits, the saved session stays; "Resume" continues where it left off.</span></button>
-    <button class="opt danger" data-cl="delete"><b>Delete</b><span>claude exits and the saved session is deleted. The project folder is not touched.</span></button>
+    <button class="opt" data-cl="hide"><b>Only remove from view</b><span>Nothing stops: claude keeps running on the machine. Bring it back any time from the "Hidden" list.</span></button>
+    <button class="opt" data-cl="stop"><b id="clStopT">Stop</b><span id="clStopD">claude and its tmux window close; the session card stays. "Resume" continues the same conversation where it left off.</span></button>
+    <button class="opt danger" data-cl="delete"><b>Delete</b><span>claude exits and the session card is deleted. Its claude conversations stay in the folder: a new session there can resume them from 🕘 Conversations. The project folder is not touched.</span></button>
   </div>
   <div class="row-end"><button class="btn" data-cl="cancel">Cancel</button></div>
 </dialog>
