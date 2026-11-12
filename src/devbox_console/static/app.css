@@ -421,3 +421,8 @@ dialog.wide[open] { display: flex; }
 @media (pointer: coarse) { .tree li.sess .tclose { visibility: visible; } }
 
 .icon-btn svg { display: block; width: 14px; height: 14px; }
+
+/* "updated — reload" after a deploy */
+#updateBar { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 60;
+  display: flex; gap: 10px; align-items: center; padding: 8px 10px 8px 14px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg-subtle); box-shadow: var(--shadow); font-size: 13px; max-width: calc(100vw - 24px); }

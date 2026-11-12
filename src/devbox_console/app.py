@@ -53,7 +53,7 @@ import time
 import uuid
 from pathlib import Path
 
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__
 from .secretstore import make_store
@@ -1856,10 +1856,24 @@ def _make_ctty() -> None:  # runs in the child after setsid (and after dropping 
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
+TERM_SOCKETS: set = set()
+SHUTTING_DOWN = False
+
+
+async def on_shutdown(app):
+    """Deploy/restart: tell open terminals why they close (1012 = service restart) so the browser shows
+    "restarting" and reconnects at once instead of backing off. tmux sessions keep running meanwhile."""
+    global SHUTTING_DOWN
+    SHUTTING_DOWN = True
+    await asyncio.gather(*(ws.close(code=WSCloseCode.SERVICE_RESTART, message=b"console restarting")
+                           for ws in list(TERM_SOCKETS)), return_exceptions=True)
+
+
 async def ws_term(req):
     u, b = U(req), B(req)
     ws = web.WebSocketResponse(heartbeat=30, max_msg_size=4 * 1024 * 1024)
     await ws.prepare(req)
+    TERM_SOCKETS.add(ws)
     wid = req.query.get("window", "")
     cols = max(20, min(int(req.query.get("cols", "120")), 500))
     rows = max(5, min(int(req.query.get("rows", "40")), 300))
@@ -1973,7 +1987,8 @@ async def ws_term(req):
                 os.write(master, msg.data)
     finally:
         # one line per terminal: shows whether the browser left or the ssh/tmux process ended (disconnect hunting)
-        ended = "process" if pump_task.done() else "browser"
+        TERM_SOCKETS.discard(ws)
+        ended = "restart" if SHUTTING_DOWN else "process" if pump_task.done() else "browser"
         u.log.write("term.close", host=b.id, target="shell" if shell_mode else wid or "-", view=view, device=device,
                     by=ended, ws_code=ws.close_code, rc=proc.returncode, secs=round(time.monotonic() - t0))
         pump_task.cancel()
@@ -2063,6 +2078,7 @@ def make_app() -> web.Application:
     r.add_get("/ws/term", ws_term)
     r.add_static("/static/", STATIC)
     app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
     app.on_cleanup.append(on_cleanup)
     return app
 

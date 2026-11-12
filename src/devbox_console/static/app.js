@@ -125,6 +125,7 @@ term.attachCustomKeyEventHandler((e) => {
   return true;
 });
 
+let restarting = 0; // when the console said it is restarting (close code 1012)
 let ws = null, wsKind = null, wsSess = null, wsWanted = false, wsRetry = 0, ctrlArmed = false;
 function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function overlay(msg, html = false) {
@@ -198,16 +199,20 @@ function connect() {
   overlay("Connecting…");
   ws = new WebSocket(`${proto}://${location.host}${withHost(`/ws/term?${q}`)}`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
+  ws.onopen = () => { if (restarting) { restarting = 0; checkVersion(); } wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") { if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; } return; }
     term.write(new Uint8Array(ev.data));
   };
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     ws = null;
     if (!wsWanted) return;
-    const delay = Math.min(1000 * 2 ** wsRetry++, 15000);
-    overlay(`Disconnected — retrying in ${Math.round(delay / 1000)} s`);
+    // 1012 = the console is restarting (deploy): sessions keep running in tmux, it is back in seconds
+    if (ev.code === 1012) restarting = Date.now();
+    const fast = restarting && Date.now() - restarting < 90000;
+    const delay = fast ? 1000 : Math.min(1000 * 2 ** wsRetry++, 15000);
+    overlay(fast ? "Console is restarting (update) — your session keeps running, reconnecting…"
+                 : `Disconnected — retrying in ${Math.round(delay / 1000)} s`);
     setTimeout(() => { if (wsWanted && isTermRoute()) connect(); }, delay);
   };
 }
@@ -1322,11 +1327,30 @@ $("#scrim").onclick = () => { $("#app").classList.remove("menu-open"); closeEdit
   }, { passive: true });
 })();
 
+/* ------------------------------------------------------------------ version: offer a reload after an update */
+let loadedVersion = null;
+async function checkVersion() {
+  try {
+    const w = await api("/api/whoami"), v = `v${w.version}${w.commit ? " · " + w.commit : ""}`;
+    if (!loadedVersion) {
+      loadedVersion = v;
+      $("#version").textContent = `devbox ${v}`;
+      $("#version").title = "Console version · git commit of this build";
+    } else if (v !== loadedVersion) { // the page still runs the old code
+      $("#updateText").textContent = `devbox was updated to ${v}.`;
+      $("#updateBar").classList.remove("hidden");
+    }
+  } catch {}
+}
+$("#updateReload").onclick = () => location.reload();
+$("#updateLater").onclick = () => $("#updateBar").classList.add("hidden");
+
 /* ------------------------------------------------------------------ live events */
 let es = null;
 function startEvents() {
   if (es) es.close();
   es = new EventSource(withHost("/api/events"));
+  es.onopen = () => checkVersion(); // also after the console came back from a restart
   es.addEventListener("windows", (e) => applySnapshot(JSON.parse(e.data)));
   es.addEventListener("hosts", (e) => { S.hosts = JSON.parse(e.data); renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards(); });
   es.addEventListener("message", (e) => addMessage(JSON.parse(e.data)));
@@ -1343,10 +1367,7 @@ window.addEventListener("online", () => { if (isTermRoute()) (ws ? checkAlive() 
   const m = location.hash.match(/^#\/h\/([^/]+)/);
   if (m) S.hostId = decodeURIComponent(m[1]);
   try { S.hosts = (await api("/api/hosts")).hosts; } catch {}
-  api("/api/whoami").then((w) => {
-    $("#version").textContent = `devbox v${w.version}${w.commit ? " · " + w.commit : ""}`;
-    $("#version").title = "Console version · git commit of this build";
-  }).catch(() => {});
+  checkVersion();
   if (!S.hosts.some((h) => h.id === S.hostId)) S.hostId = "local";
   try { applySnapshot(await api("/api/windows")); } catch {}
   ensureSettings();

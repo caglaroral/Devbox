@@ -62,3 +62,25 @@ def test_ws_requires_auth(console):
             except aiohttp.WSServerHandshakeError as e:
                 return e.status == 401
     assert asyncio.run(run())
+
+
+def test_restart_tells_terminals_and_keeps_sessions(console):
+    """Deploy/restart: open terminals are closed with 1012 (service restart) so the browser reconnects at
+    once; the tmux session itself keeps running."""
+    console.ok("POST", "/api/sessions", {"name": "keep", "cwd": str(console.work / "proj-a"), "command": "cat"})
+    wid = console.window("keep")["id"]
+    ws_url = console.url.replace("http", "ws") + f"/ws/term?window={wid}&cols=80&rows=24"
+
+    async def run():
+        async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
+            async with s.ws_connect(ws_url) as ws:
+                await read_for(ws, 1)
+                console.proc.terminate()  # what `docker compose up` does to the old container (SIGTERM)
+                while True:
+                    m = await asyncio.wait_for(ws.receive(), 10)
+                    if m.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
+                        return ws.close_code
+    code = asyncio.run(run())
+    console.proc.wait(10)
+    assert code == 1012
+    assert "keep" in console.tmux("list-windows", "-a", "-F", "#{window_name}").split(), "claude keeps running"
