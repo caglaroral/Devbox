@@ -90,3 +90,13 @@ def test_pasted_private_key_and_manual(console):
     if st == 200:
         assert short(r["hosts"])["fake"]["error"]
         console.ok("DELETE", "/api/hosts/fake")
+
+
+def test_askpass_is_runnable_even_if_runtime_is_noexec(console):
+    """Docker mounts the tmpfs runtime dir noexec; the askpass helper must live somewhere executable."""
+    import os
+    import subprocess
+    askpass = console.data / "askpass.sh"
+    assert askpass.exists() and os.access(askpass, os.X_OK)
+    out = subprocess.run([str(askpass)], env={"DEVBOX_ASKPASS_PW": "p@ss"}, capture_output=True, text=True).stdout
+    assert out == "p@ss\n"

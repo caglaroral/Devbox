@@ -91,7 +91,8 @@ for d in (DATA, DATA / "users", CM_DIR, RUNTIME):
     os.chmod(d, 0o700)
 
 STORE = make_store(DATA)
-ASKPASS = RUNTIME / "askpass.sh"  # prints $DEVBOX_ASKPASS_PW; the secret itself is only in the env
+# prints $DEVBOX_ASKPASS_PW; the secret itself is only in the env. Not on RUNTIME: Docker mounts tmpfs noexec.
+ASKPASS = DATA / "askpass.sh"
 ASKPASS.write_text('#!/bin/sh\nprintf "%s\\n" "$DEVBOX_ASKPASS_PW"\n')
 os.chmod(ASKPASS, 0o700)
 
