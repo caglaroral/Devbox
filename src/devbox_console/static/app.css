@@ -63,6 +63,7 @@ nav a.active, .winlist li.active { background: var(--bg-active); box-shadow: ins
 #windowList li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 #windowList li .tag { color: var(--fg-subtle); font: 11px var(--mono); }
 .sidebar-foot { margin-top: auto; padding: 8px; }
+.sidebar-foot .version { font: 11px var(--mono); padding: 6px 2px 0; color: var(--fg-subtle); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--fg-subtle); }
 /* "working": compositor-only ring (transform/opacity) -> no repaint per frame */

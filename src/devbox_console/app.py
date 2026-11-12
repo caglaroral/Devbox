@@ -46,6 +46,7 @@ import secrets
 import shlex
 import signal
 import struct
+import subprocess
 import tempfile
 import termios
 import time
@@ -53,6 +54,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+from . import __version__
 from .secretstore import make_store
 
 try:  # libpam is not needed (and may be missing) in the Docker image
@@ -82,6 +84,23 @@ STD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 AUTH = os.environ.get("DEVBOX_AUTH", "pam").strip().lower()  # pam | ssh
 LOCAL_SSH = os.environ.get("DEVBOX_LOCAL_SSH", "host.docker.internal:22")
 LOCAL_LABEL = os.environ.get("DEVBOX_LOCAL_LABEL", NODENAME)
+
+
+def _build_commit() -> str:
+    """Commit of this build: DEVBOX_COMMIT (set at docker build), else the git checkout we run from."""
+    c = os.environ.get("DEVBOX_COMMIT", "").strip()
+    if c:
+        return c
+    try:
+        r = subprocess.run(["git", "-C", str(Path(__file__).parent), "describe", "--always", "--dirty", "--exclude=*"],
+                           capture_output=True, text=True, timeout=3)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+VERSION = __version__
+COMMIT = _build_commit()
 CM_DIR = Path(tempfile.gettempdir()) / f"devbox-cm-{os.geteuid()}"  # short path: unix socket limit
 RUNTIME = Path(os.environ.get("DEVBOX_RUNTIME") or ("/dev/shm" if os.path.isdir("/dev/shm") else tempfile.gettempdir())) \
     / f"devbox-{os.geteuid()}"  # tmpfs: decrypted private keys only live here
@@ -922,7 +941,8 @@ async def api_login(req):
 
 async def api_whoami(req):
     return web.json_response({"user": cookie_user(req.cookies.get("devbox_auth")), "host": LOCAL_LABEL,
-                              "auth": AUTH, "single_user": None if IS_ROOT or AUTH == "ssh" else RUN_USER})
+                              "auth": AUTH, "single_user": None if IS_ROOT or AUTH == "ssh" else RUN_USER,
+                              "version": VERSION, "commit": COMMIT})
 
 
 async def api_logout(req):
@@ -1655,7 +1675,7 @@ def main() -> None:
         mode = f"Docker/SSH auth via {LOCAL_SSH}"
     else:
         mode = "multi-user (root, PAM)" if IS_ROOT else f"single-user (PAM, only '{RUN_USER}')"
-    print(f"devbox console on http://{HOST}:{PORT} — {mode}, tmux session '{SESSION}', data {DATA}")
+    print(f"devbox console {VERSION} ({COMMIT or 'unknown commit'}) on http://{HOST}:{PORT} — {mode}, tmux session '{SESSION}', data {DATA}")
     web.run_app(make_app(), host=HOST, port=PORT, print=None)
 
 

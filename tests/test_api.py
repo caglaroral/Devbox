@@ -12,6 +12,8 @@ def test_auth_required(console):
     assert st in (401, 403)
     who = console.ok("GET", "/api/whoami")
     assert who["user"] == console.user and who["auth"] == "pam"
+    from devbox_console import __version__
+    assert who["version"] == __version__ and who["commit"], "version + git commit are reported"
 
 
 def test_origin_check(console):

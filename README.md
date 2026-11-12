@@ -16,7 +16,7 @@ Tarayıcıdan (mobil dahil) **Claude Code** oturumlarını yöneten web konsolu.
 ```bash
 cd src
 cp .env.example .env
-docker compose up -d --build     # http://<makine>:7700
+DEVBOX_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build     # http://<makine>:7700
 ```
 
 Host makinede `sshd` (parola ile giriş açık), `tmux` ve `claude` kurulu olmalı. Docker'sız kurulum, Vault modları ve tüm ayarlar için: **[src/README.md](src/README.md)**.

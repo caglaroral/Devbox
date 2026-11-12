@@ -28,7 +28,8 @@ tmux içinde çalışan **Claude Code** (`claude`) oturumlarını, bu makinede v
 Terminal, ttyd yerine konsolun kendi PTY ⇄ WebSocket köprüsüyle xterm.js'e akar. Her tarayıcı sekmesi tmux'a ayrı bir *grouped session* olarak bağlanır; böylece her sekme farklı bir pencereyi gösterebilir, sekme kapanınca bu geçici görünüm silinir.
 
 Kopyala/yapıştır:
-- **Masaüstü:** Ctrl+Shift+C / Ctrl+Shift+V; tmux copy-mode'dan OSC 52 ile kopyalama.
+- **Masaüstü:** Ctrl+Shift+C ile kopyala, Ctrl+V ile yapıştır; tmux copy-mode'dan OSC 52 ile kopyalama.
+- **Resim gönderme:** Terminalde Ctrl+V ile yapıştır, dosyayı terminale sürükle ya da 📎 (mobilde galeri/kamera). Resim session'ın çalıştığı klasörde `.devbox/uploads/` altına kaydedilir (git'e girmez, 7 gün sonra silinir) ve yolu prompt'a yazılır.
 - **Mobil:** Terminale **uzun basınca** ekran metni yerel seçim tutamaçlarıyla açılır (Seçimi kopyala / Terminale yaz). Alttaki tuş çubuğunda Esc, Tab, Ctrl, oklar, ^C, ⇧Tab, PgUp/PgDn, Yapıştır ve ✎ Yaz (dikte/otomatik düzeltme için) bulunur. Kaydırma tmux copy-mode'u sürer, iki parmakla yazı boyutu değişir.
 
 ## Kurulum — Docker Compose (önerilen)
@@ -36,8 +37,10 @@ Kopyala/yapıştır:
 ```bash
 cd src
 cp .env.example .env        # DEVBOX_PUBLIC_URL, DEVBOX_LOCAL_LABEL …
-docker compose up -d --build
+DEVBOX_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
 ```
+
+`DEVBOX_COMMIT` isteğe bağlı; verilirse sol alttaki sürüm satırında (`devbox v0.2.0 · a05572c`) ve `/api/whoami` çıktısında görünür. Sürüm numarası `devbox_console/__init__.py` içindedir.
 
 Host makinede gerekenler:
 - `sshd` çalışıyor ve **parola ile giriş açık** olmalı. Giriş ekranı, kullanıcı adı/parolayı host'un sshd'sine (yani PAM'e) sordurur; Proxmox'taki "Linux PAM" girişi gibi.

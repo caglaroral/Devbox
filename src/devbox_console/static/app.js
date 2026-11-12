@@ -1196,6 +1196,10 @@ document.addEventListener("visibilitychange", () => {
   const m = location.hash.match(/^#\/h\/([^/]+)/);
   if (m) S.hostId = decodeURIComponent(m[1]);
   try { S.hosts = (await api("/api/hosts")).hosts; } catch {}
+  api("/api/whoami").then((w) => {
+    $("#version").textContent = `devbox v${w.version}${w.commit ? " · " + w.commit : ""}`;
+    $("#version").title = "Console version · git commit of this build";
+  }).catch(() => {});
   if (!S.hosts.some((h) => h.id === S.hostId)) S.hostId = "local";
   try { applySnapshot(await api("/api/windows")); } catch {}
   ensureSettings();

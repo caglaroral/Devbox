@@ -15,7 +15,10 @@ services:
     # no published ports: only the console talks to Vault
 
   console:
-    build: .
+    build:
+      context: .
+      args:
+        DEVBOX_COMMIT: ${DEVBOX_COMMIT:-}
     depends_on: [vault]
     ports:
       - "${DEVBOX_BIND:-0.0.0.0}:${DEVBOX_PORT:-7700}:7700"

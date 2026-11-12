@@ -14,6 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY devbox_console ./devbox_console
 COPY devbox-msg ./devbox-msg
+# git commit of this build (the build context has no .git): DEVBOX_COMMIT=$(git rev-parse --short HEAD)
+ARG DEVBOX_COMMIT=""
+ENV DEVBOX_COMMIT=$DEVBOX_COMMIT
 
 ENV DEVBOX_AUTH=ssh \
     DEVBOX_HOST=0.0.0.0 \
