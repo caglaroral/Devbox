@@ -306,14 +306,28 @@ $("#copyBtn").onclick = () => (term.hasSelection() ? copyText(term.getSelection(
 $("#pasteBtn").onclick = pasteFromClipboard;
 $("#textBtn").onclick = () => openScreenText();
 
+// touch scroll speed: lines scrolled per line of finger movement (Settings → This device; per device)
+const GAIN_KEY = "devbox.scrollGain", GAIN_DEFAULT = 1.8;
+let gainCache = null;
+function scrollGain() {
+  if (gainCache == null) { try { gainCache = +localStorage.getItem(GAIN_KEY) || GAIN_DEFAULT; } catch { gainCache = GAIN_DEFAULT; } }
+  return gainCache;
+}
+function showGain() { $("#scrollGain").value = scrollGain(); $("#scrollGainVal").textContent = scrollGain().toFixed(1); }
+$("#scrollGain").addEventListener("input", (e) => {
+  gainCache = Math.max(0.5, Math.min(5, +e.target.value || GAIN_DEFAULT));
+  try { localStorage.setItem(GAIN_KEY, gainCache); } catch {}
+  showGain();
+});
+showGain();
+
 /* touch: swipe = scroll history (tmux copy-mode), pinch = font size, long-press = selection view, tap = keyboard */
 (() => {
   const el = $("#termWrap");
   let y0 = null, acc = 0, pinch0 = null, f0 = fontSize, moved = false, lp = null, longPressed = false;
   let vel = 0, t0 = 0, glideRaf = 0;
-  const SCROLL_GAIN = 1.8; // lines scrolled per line of finger movement ("sensitivity")
   const scrollBy = () => { // whole lines out of the accumulated finger movement
-    const unit = lineH() / SCROLL_GAIN, n = Math.trunc(acc / unit);
+    const unit = lineH() / scrollGain(), n = Math.trunc(acc / unit);
     if (!n) return;
     moved = true; acc -= n * unit;
     if (S.route === "shell") term.scrollLines(-n); else wsSend({ t: "scroll", n });
