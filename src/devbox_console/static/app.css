@@ -55,8 +55,9 @@ nav a, .winlist li { display: flex; align-items: center; gap: 8px; padding: 6px 
 nav a:hover, .winlist li:hover { background: var(--bg-hover); }
 nav a.active, .winlist li.active { background: var(--bg-active); box-shadow: inset 2px 0 0 var(--accent); }
 .ico { width: 16px; text-align: center; color: var(--fg-muted); }
-.count { margin-left: auto; background: var(--bg-active); border-radius: 10px; padding: 0 7px; font-size: 12px; color: var(--fg-muted); }
-#unread { background: var(--accent); color: #fff; }
+/* counts next to Hosts / Sessions: same look as the numbers in the Hosts & Sessions tree */
+.count { margin-left: auto; color: var(--fg-subtle); font: 11px var(--mono); text-decoration: none; }
+#unread { background: var(--accent); color: #fff; border-radius: 10px; padding: 0 7px; font: 12px var(--font); }
 .section-title { display: flex; justify-content: space-between; align-items: center; color: var(--fg-muted);
   font-size: 12px; padding: 14px 8px 2px; }
 .winlist { list-style: none; margin: 0; padding: 0; }
@@ -417,3 +418,5 @@ dialog.wide[open] { display: flex; }
 .tree li.sess:hover .tclose, .tree li.sess.active .tclose { visibility: visible; }
 .tree li.sess .tclose:hover { color: var(--danger); }
 @media (pointer: coarse) { .tree li.sess .tclose { visibility: visible; } }
+
+.icon-btn svg { display: block; width: 14px; height: 14px; }

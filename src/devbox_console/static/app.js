@@ -22,6 +22,8 @@ const S = {
   byHost: {},             // host id -> last snapshot (the Sessions page lists every host)
 };
 
+// line icon in the text colour (emoji don't match the theme)
+const ICON_HISTORY = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6 8a5.4 5.4 0 1 0 1.5-3.8"/><path d="M2.4 2.6v2.6H5"/><path d="M8 5.2V8l2 1.4"/></svg>';
 const STATUS_LABEL = { working: "Working", waiting: "Waiting for approval", idle: "Idle", shell: "Shell", dead: "Exited", stopped: "Stopped" };
 const cur = () => S.windows.find((w) => w.name === S.current);
 const hp = (p) => `#/h/${encodeURIComponent(S.hostId)}/${p}`;
@@ -1039,7 +1041,7 @@ function cardHTML(w, hid) {
       <div class="card-head">
         <span class="tile ${w.shell ? "tile-shell" : ""}">${w.shell ? "$" : esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
         <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.shell ? " · shell, not saved" : w.saved || w.external ? "" : " · unsaved"}</span></div>
-        ${w.saved && !w.shell ? `<button class="icon-btn" data-act="convs" title="Claude conversations">🕘</button>` : ""}
+        ${w.saved && !w.shell ? `<button class="icon-btn" data-act="convs" title="Claude conversations">${ICON_HISTORY}</button>` : ""}
         ${w.external || w.shell ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
         <button class="icon-btn" data-act="close" title="Close / hide">✕</button>
       </div>

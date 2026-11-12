@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0d1117">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
 <title>devbox console</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
 <link rel="stylesheet" href="/static/app.css">
@@ -352,7 +353,7 @@
   <div class="close-opts">
     <button class="opt" data-cl="hide"><b>Only remove from view</b><span>Nothing stops: claude keeps running on the machine. Bring it back any time from the "Hidden" list.</span></button>
     <button class="opt" data-cl="stop"><b id="clStopT">Stop</b><span id="clStopD">claude and its tmux window close; the session card stays. "Resume" continues the same conversation where it left off.</span></button>
-    <button class="opt danger" data-cl="delete"><b>Delete</b><span>claude exits and the session card is deleted. Its claude conversations stay in the folder: a new session there can resume them from 🕘 Conversations. The project folder is not touched.</span></button>
+    <button class="opt danger" data-cl="delete"><b>Delete</b><span>claude exits and the session card is deleted. Its claude conversations stay in the folder: a new session there can resume them from Conversations (the history button on its card). The project folder is not touched.</span></button>
   </div>
   <div class="row-end"><button class="btn" data-cl="cancel">Cancel</button></div>
 </dialog>
