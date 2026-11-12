@@ -502,10 +502,3 @@ dialog.wide[open] { display: flex; }
   .cm-s-devbox .cm-def { color: #8250df; } .cm-s-devbox .cm-variable-2, .cm-s-devbox .cm-variable-3, .cm-s-devbox .cm-type { color: #953800; }
   .cm-s-devbox .cm-tag { color: #116329; }
 }
-
-/* handoff: the session is live on another device (buffer terminal) */
-#handoff { position: absolute; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center;
-  background: rgba(1,4,9,.72); backdrop-filter: blur(2px); cursor: pointer; }
-.handoff-box { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 20px 24px;
-  background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 12px; color: var(--fg); max-width: 90%; }
-.handoff-box b { font-size: 16px; }
