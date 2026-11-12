@@ -2072,10 +2072,9 @@ async def term_buffer(req, ws, u, b, tsess: str, wid: str, cols: int, rows: int,
     async def send_size(force: bool = False):
         out = await b.tmux("display-message", "-p", "-t", st["pane"] or st["shown"], "#{pane_width}x#{pane_height}")
         size = out.strip()
-        own = b.size_owner.get(st["shown"]) == view
-        if re.fullmatch(r"\d+x\d+", size) and (force or size != st["size"] or own != st.get("own")):
-            st["size"], st["own"] = size, own
-            await ws.send_str("size:" + size + (":own" if own else ""))  # own: this device sizes the window
+        if re.fullmatch(r"\d+x\d+", size) and (force or size != st["size"]):
+            st["size"] = size
+            await ws.send_str("size:" + size)
 
     async def take_size():
         """This device is in use: the window gets its size (window-size becomes manual for it)."""
@@ -2213,7 +2212,6 @@ async def term_buffer(req, ws, u, b, tsess: str, wid: str, cols: int, rows: int,
                     st["want"] = (max(20, min(int(m["c"]), 500)), max(5, min(int(m["r"]), 300)))
                 if b.size_owner.get(st["shown"]) != view or st["size"] != "%dx%d" % st["want"]:
                     await take_size()
-                    await send_size()  # ownership may change without a size change
             elif t == "select" and WID_RE.fullmatch(str(m.get("w", ""))):
                 await ctl(f"select-window -t {view}:{m['w']}")
                 st["shown"] = m["w"]

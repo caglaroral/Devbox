@@ -140,25 +140,7 @@ term.attachCustomKeyEventHandler((e) => {
 let restarting = 0;
 let wsBuf = false, paneSize = null; // buffer terminal: the pane's size (the browser terminal follows it)
 const isBuf = () => wsBuf && wsKind === "tmux";
-// the size this device wants, at YOUR font size (the font may be scaled for now to fit another device's size)
-function wantDims() {
-  const p = fit.proposeDimensions();
-  if (!p) return { cols: term.cols, rows: term.rows };
-  const k = (term.options.fontSize || fontSize) / fontSize; // cells shrink/grow with the font
-  return { cols: Math.max(20, Math.floor(p.cols * k)), rows: Math.max(5, Math.floor(p.rows * k)) };
-}
-// buffer terminal: the program draws for one size only. The device that doesn't own it shows that size fitted
-// to its screen (bigger or smaller font) instead of blank space or a cropped view; your font comes back when it
-// owns the size again.
-function applyPaneSize() {
-  if (!isBuf() || !paneSize) return;
-  const want = wantDims();
-  const mine = paneSize.own || (paneSize.cols === want.cols && Math.abs(paneSize.rows - want.rows) <= 1);
-  const scale = Math.min(want.cols / paneSize.cols, want.rows / paneSize.rows);
-  const f = mine ? fontSize : Math.max(6, Math.min(32, Math.floor(fontSize * scale * 2) / 2));
-  if (term.options.fontSize !== f) term.options.fontSize = f;
-  term.resize(paneSize.cols, paneSize.rows);
-} // when the console said it is restarting (close code 1012)
+const wantDims = () => fit.proposeDimensions() || { cols: term.cols, rows: term.rows }; // when the console said it is restarting (close code 1012)
 let ws = null, wsKind = null, wsSess = null, wsWanted = false, wsRetry = 0, ctrlArmed = false;
 function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function overlay(msg, html = false) {
@@ -192,8 +174,7 @@ function updateSizeBar() {
   const bar = $("#sizeBar"), w = S.route === "term" ? cur() : null;
   let have = w && { cols: w.width, rows: w.height }, mine = { cols: term.cols, rows: term.rows };
   if (isBuf()) { have = paneSize; mine = wantDims(); }
-  const off = w?.running && have?.cols && ws && wsKind === "tmux" && !(isBuf() && paneSize?.own) &&
-    (have.cols !== mine.cols || Math.abs(have.rows - mine.rows) > 1);
+  const off = w?.running && have?.cols && ws && wsKind === "tmux" && (have.cols !== mine.cols || Math.abs(have.rows - mine.rows) > 1);
   bar.classList.toggle("hidden", !off);
   if (!off) return;
   const smaller = have.cols < mine.cols;
@@ -244,8 +225,8 @@ function connect() {
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {
       if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; }
-      const m = /^size:(\d+)x(\d+)(:own)?$/.exec(ev.data);
-      if (m) { paneSize = { cols: +m[1], rows: +m[2], own: !!m[3] }; applyPaneSize(); updateSizeBar(); }
+      const m = /^size:(\d+)x(\d+)$/.exec(ev.data);
+      if (m) { paneSize = { cols: +m[1], rows: +m[2] }; term.resize(paneSize.cols, paneSize.rows); updateSizeBar(); }
       return;
     }
     term.write(new Uint8Array(ev.data));
@@ -345,7 +326,7 @@ function setFont(n) {
 // classic: the browser terminal fits its box and tmux follows; buffer: ask for that size, the server answers
 // with the pane's size ("size:") and the browser terminal takes exactly that (raw output is laid out for it)
 function sendSize() {
-  if (isBuf()) { const d = wantDims(); wsSend({ t: "resize", c: d.cols, r: d.rows }); applyPaneSize(); return; }
+  if (isBuf()) { const d = wantDims(); wsSend({ t: "resize", c: d.cols, r: d.rows }); return; }
   fit.fit(); wsSend({ t: "resize", c: term.cols, r: term.rows });
 }
 $("#fontMinus").onclick = () => setFont(fontSize - 1);

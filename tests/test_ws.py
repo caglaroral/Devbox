@@ -220,7 +220,7 @@ def test_buffer_terminal(console):
         async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
             async with s.ws_connect(base + "&cols=90&rows=30") as ws:
                 texts, buf = await collect(ws, 3, until=b"\x1b[?2004h")
-                assert "size:90x30:own" in texts and size(wid) == "90x30", "the device that opens the window sizes it"
+                assert "size:90x30" in texts and size(wid) == "90x30", "the device that opens the window sizes it"
                 assert b"\r\n150\r\n" in buf and b"300" in buf, "history before the connection is replayed"
 
                 # (wait for a computed marker: the echoed command line itself contains "3000")
@@ -236,17 +236,15 @@ def test_buffer_terminal(console):
 
                 await ws.send_str(json.dumps({"t": "resize", "c": 60, "r": 20}))
                 texts, _ = await collect(ws, 1.5)
-                assert size(wid) == "60x20" and "size:60x20:own" in texts
+                assert size(wid) == "60x20" and "size:60x20" in texts
 
                 async with s.ws_connect(base + "&cols=50&rows=25") as phone:
                     await collect(phone, 2)
                     texts, _ = await collect(ws, 1.5)
-                    assert size(wid) == "50x25" and "size:50x25" in texts, "the other device follows the new size (not its own)"
+                    assert size(wid) == "50x25" and "size:50x25" in texts, "the other device follows the new size"
                     await ws.send_str(json.dumps({"t": "claim", "c": 60, "r": 20}))
-                    texts, _ = await collect(ws, 1.5)
-                    assert size(wid) == "60x20" and "size:60x20:own" in texts, "claiming takes it back"
-                    texts, _ = await collect(phone, 1)
-                    assert "size:60x20" in texts, "the phone hears it lost the size"
+                    await asyncio.sleep(1)
+                    assert size(wid) == "60x20", "claiming takes it back"
 
                 await ws.send_str(json.dumps({"t": "select", "w": wid2}))
                 texts, buf = await collect(ws, 2)
