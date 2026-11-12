@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.11
+- Phone ⋯ menu: buttons stay inside the dialog (equal columns; Copy / Paste / Attach and A− / A+ rows);
+  "Restart (new conversation)" is now **New conversation**.
+
 ## v0.7.10
 - Phone: tapping **↓ Jump to bottom** no longer opens the keyboard.
 

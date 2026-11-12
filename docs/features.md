@@ -46,7 +46,7 @@ closes them and they disappear from the list.
 
 Every saved claude session keeps **its own** conversation:
 
-- A new session (or **Restart (new conversation)**) starts claude with a fresh `--session-id`.
+- A new session (or **New conversation** in the ⋯ menu) starts claude with a fresh `--session-id`.
 - **Resume** runs `claude --resume <that id>` — two sessions in the same folder never pick up each other's
   conversation.
 - `/clear` and claude's own `/resume` are followed (a SessionStart hook reports the conversation claude is in).
@@ -101,7 +101,7 @@ you should look at on their own line, so they can be clicked.
   a device takes the size.
 - Header: **Copy**, **Paste**, **📎 Attach**, **Files**, **Text** (screen text for selecting), **A−/A+**, **⋯**.
   On a phone these are in the **⋯** menu.
-- **⋯** menu: Send Ctrl‑C, Edit…, Conversations…, Files, Screen text, Restart (new conversation), Resume,
+- **⋯** menu: Send Ctrl‑C, Edit…, Conversations…, Files, Screen text, New conversation, Resume,
   Close…, and a field to send a prompt or slash command.
 
 ### Phone
