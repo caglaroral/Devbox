@@ -55,6 +55,7 @@
           <button class="btn" id="copyBtn" title="Copy selection (Ctrl+Shift+C)">Copy</button>
           <button class="btn" id="pasteBtn" title="Paste (Ctrl+V)">Paste</button>
           <button class="btn" id="attachBtn" title="Send files (or paste / drop them on the terminal)">📎 Attach</button>
+          <button class="btn" id="filesBtn" title="Files of this session: browse, view, edit">Files</button>
           <button class="btn" id="textBtn" title="Open the screen as text (select/copy)">Text</button>
           <button class="btn" id="fontMinus" title="Smaller font">A−</button>
           <button class="btn" id="fontPlus" title="Larger font">A+</button>
@@ -115,6 +116,42 @@
         <button class="btn primary" id="addHostBtn">＋ Add<span class="hide-mobile"> host</span></button>
       </header>
       <div id="hostCards" class="cards"></div>
+    </section>
+
+    <!-- files of a session: browse / recent, view images & PDFs, edit text & code -->
+    <section id="view-files" class="view">
+      <header class="page-head">
+        <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
+        <h1 class="fx-h1">Files <span class="muted h1-host" id="fxTitle"></span></h1>
+        <div class="grow"></div>
+        <button class="btn" id="fxTerm" title="Back to the terminal">Terminal</button>
+      </header>
+      <div class="fx" id="fx">
+        <aside class="fx-side">
+          <div class="fx-tabs">
+            <div class="seg" id="fxTabs"><button data-t="browse" class="on">Folder</button><button data-t="recent" title="Files changed in the last 24 h">Recent</button></div>
+            <div class="grow"></div>
+            <label class="check small" title="Show dotfiles"><input type="checkbox" id="fxHidden"> hidden</label>
+            <button class="icon-btn" id="fxRefresh" title="Refresh">⟳</button>
+          </div>
+          <div class="fx-crumbs" id="fxCrumbs"></div>
+          <input id="fxFilter" class="filter" type="search" placeholder="Filter…" autocomplete="off">
+          <ul class="fx-list" id="fxList"></ul>
+        </aside>
+        <section class="fx-main">
+          <div class="fx-head">
+            <button class="icon-btn only-mobile" id="fxBack" aria-label="Back to the list">←</button>
+            <div class="fx-name"><b id="fxName"></b><span class="muted small" id="fxMeta"></span></div>
+            <div class="grow"></div>
+            <button class="btn hidden" id="fxMd" title="Rendered view / source">Edit</button>
+            <button class="btn hidden" id="fxReload" title="Load the version on disk">Reload</button>
+            <button class="btn primary hidden" id="fxSave" title="Save (Ctrl+S)">Save</button>
+            <button class="btn hidden" id="fxNewTab" title="Open in a new tab">Open</button>
+            <button class="btn hidden" id="fxDownload">Download</button>
+          </div>
+          <div class="fx-body" id="fxBody"><div class="empty">Pick a file on the left.</div></div>
+        </section>
+      </div>
     </section>
 
     <!-- team board -->
@@ -337,6 +374,7 @@
     <button class="btn" data-mg="interrupt">Send Ctrl‑C</button>
     <button class="btn" data-mg="edit">Edit…</button>
     <button class="btn" data-mg="convs">Conversations…</button>
+    <button class="btn" data-mg="files">Files</button>
     <button class="btn" data-mg="text">Screen text</button>
     <button class="btn" data-mg="restart" title="New claude conversation in the same folder">Restart (new conversation)</button>
     <button class="btn" data-mg="resume" title="Restart claude in this session's own conversation">Resume</button>

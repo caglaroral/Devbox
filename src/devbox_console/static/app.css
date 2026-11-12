@@ -426,3 +426,74 @@ dialog.wide[open] { display: flex; }
 #updateBar { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 60;
   display: flex; gap: 10px; align-items: center; padding: 8px 10px 8px 14px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--bg-subtle); box-shadow: var(--shadow); font-size: 13px; max-width: calc(100vw - 24px); }
+
+/* ---------- files panel (per session) ---------- */
+.fx { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 320px) 1fr; border-top: 1px solid var(--border-muted); }
+.fx-side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--bg-subtle); }
+.fx-tabs { display: flex; align-items: center; gap: 8px; padding: 8px 10px 4px; }
+.fx-tabs .check { margin: 0; display: flex; gap: 4px; align-items: center; color: var(--fg-muted); }
+.fx-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0; padding: 4px 10px; font: 12px var(--mono); color: var(--fg-subtle); }
+.fx-crumbs button { background: none; border: 0; color: var(--fg-muted); font: inherit; padding: 1px 3px; border-radius: 4px; cursor: pointer; }
+.fx-crumbs button:hover { background: var(--bg-hover); color: var(--fg); }
+.fx-crumbs button:last-of-type:not(.fx-home) { color: var(--fg); }
+.fx-side .filter { margin: 2px 10px 6px; }
+.fx-list { list-style: none; margin: 0; padding: 0 4px 10px; overflow-y: auto; flex: 1; min-height: 0; }
+.fx-list li { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.fx-list li:hover { background: var(--bg-hover); }
+.fx-list li.active { background: var(--bg-active); box-shadow: inset 2px 0 0 var(--accent); }
+.fx-list .ico { color: var(--fg-muted); font: 11px var(--mono); width: 16px; flex: none; text-align: center; }
+.fx-list li[data-isdir] .ico { color: var(--accent-fg); }
+.fx-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-list .fx-sz, .fx-list .fx-t { font: 11px var(--mono); color: var(--fg-subtle); flex: none; }
+.fx-list .fx-sz { min-width: 46px; text-align: right; }
+.fx-list .fx-t { min-width: 28px; text-align: right; }
+.fx-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.fx-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); flex-wrap: wrap; }
+.fx-name { display: flex; flex-direction: column; min-width: 0; }
+.fx-name b, .fx-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-body { flex: 1; min-height: 0; overflow: auto; position: relative; background: var(--bg); }
+.fx-body .empty { padding: 40px; }
+.fx-media { min-height: 100%; display: grid; place-items: center; padding: 16px;
+  background: repeating-conic-gradient(var(--bg-subtle) 0% 25%, var(--bg) 0% 50%) 50% / 20px 20px; }
+.fx-media img, .fx-media video { max-width: 100%; max-height: calc(100vh - 160px); object-fit: contain; box-shadow: var(--shadow); }
+.fx-pdf { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.fx-pre { margin: 0; padding: 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; }
+.fx-body .CodeMirror { height: 100%; font: 13px/1.5 var(--mono); }
+.fx-md { padding: 20px 28px; max-width: 920px; line-height: 1.6; }
+.fx-md h1, .fx-md h2 { border-bottom: 1px solid var(--border-muted); padding-bottom: .3em; }
+.fx-md code { background: var(--bg-active); padding: .1em .35em; border-radius: 4px; }
+.fx-md pre { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto; }
+.fx-md pre code { background: none; padding: 0; }
+.fx-md table { border-collapse: collapse; } .fx-md th, .fx-md td { border: 1px solid var(--border); padding: 4px 10px; }
+.fx-md img { max-width: 100%; }
+.fx-md a { color: var(--accent-fg); }
+@media (max-width: 820px) {
+  .fx { grid-template-columns: 1fr; }
+  .fx .fx-main { display: none; }
+  .fx.show-main .fx-side { display: none; }
+  .fx.show-main .fx-main { display: flex; }
+  .fx-md { padding: 14px; }
+}
+
+/* CodeMirror theme "devbox": GitHub dark / light like the rest of the console */
+.cm-s-devbox.CodeMirror { background: var(--bg); color: var(--fg); }
+.cm-s-devbox .CodeMirror-gutters { background: var(--bg-subtle); border-right: 1px solid var(--border-muted); }
+.cm-s-devbox .CodeMirror-linenumber { color: var(--fg-subtle); }
+.cm-s-devbox .CodeMirror-cursor { border-left-color: var(--accent-fg); }
+.cm-s-devbox .CodeMirror-selected, .cm-s-devbox.CodeMirror-focused .CodeMirror-selected { background: rgba(56,139,253,.3); }
+.cm-s-devbox .CodeMirror-activeline-background { background: var(--bg-hover); }
+.cm-s-devbox .CodeMirror-matchingbracket { color: var(--fg) !important; background: rgba(63,185,80,.25); }
+.cm-s-devbox .cm-keyword { color: #ff7b72; } .cm-s-devbox .cm-string, .cm-s-devbox .cm-string-2 { color: #a5d6ff; }
+.cm-s-devbox .cm-comment { color: #8b949e; font-style: italic; } .cm-s-devbox .cm-number, .cm-s-devbox .cm-atom { color: #79c0ff; }
+.cm-s-devbox .cm-def { color: #d2a8ff; } .cm-s-devbox .cm-variable-2, .cm-s-devbox .cm-variable-3, .cm-s-devbox .cm-type { color: #ffa657; }
+.cm-s-devbox .cm-property, .cm-s-devbox .cm-attribute, .cm-s-devbox .cm-builtin { color: #79c0ff; }
+.cm-s-devbox .cm-tag { color: #7ee787; } .cm-s-devbox .cm-meta, .cm-s-devbox .cm-qualifier { color: #8b949e; }
+.cm-s-devbox .cm-header { color: #79c0ff; font-weight: 600; } .cm-s-devbox .cm-link, .cm-s-devbox .cm-url { color: #a5d6ff; }
+.cm-s-devbox .cm-operator { color: #ff7b72; } .cm-s-devbox .cm-error { color: #f85149; }
+@media (prefers-color-scheme: light) {
+  .cm-s-devbox .cm-keyword, .cm-s-devbox .cm-operator { color: #cf222e; } .cm-s-devbox .cm-string, .cm-s-devbox .cm-string-2, .cm-s-devbox .cm-link, .cm-s-devbox .cm-url { color: #0a3069; }
+  .cm-s-devbox .cm-comment, .cm-s-devbox .cm-meta, .cm-s-devbox .cm-qualifier { color: #6e7781; }
+  .cm-s-devbox .cm-number, .cm-s-devbox .cm-atom, .cm-s-devbox .cm-property, .cm-s-devbox .cm-attribute, .cm-s-devbox .cm-builtin, .cm-s-devbox .cm-header { color: #0550ae; }
+  .cm-s-devbox .cm-def { color: #8250df; } .cm-s-devbox .cm-variable-2, .cm-s-devbox .cm-variable-3, .cm-s-devbox .cm-type { color: #953800; }
+  .cm-s-devbox .cm-tag { color: #116329; }
+}

@@ -50,6 +50,7 @@ import subprocess
 import tempfile
 import termios
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -273,6 +274,10 @@ CONV_FLAGS = {"-c", "--continue", "-r", "--resume", "--session-id", "--fork-sess
 # reports the conversation it is in, also after /clear or its own /resume, so Resume opens the right one.
 CLAUDE_HOOK = ('k="$DEVBOX_SESSION_KEY"; [ -n "$k" ] || exit 0; d="$HOME/.devbox/claude"; '
                'mkdir -p "$d" && cat > "$d/$k.json"')
+# so the files panel can show what claude made: its file paths are clickable in the console's terminal
+CLAUDE_PROMPT = ("The user works in the devbox web console: file paths you print in the terminal are clickable there "
+                 "and open in a viewer/editor. When you create or update a file the user should look at (an image, "
+                 "chart, PDF, report, page, …), print its absolute path on its own line.")
 CLAUDE_SETTINGS = json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": CLAUDE_HOOK}]}]}},
                              separators=(",", ":"))
 # $1 = project dir name under ~/.claude/projects: newest transcripts with what is needed for the list
@@ -429,7 +434,7 @@ class Box:
         return argv, self.user.spawn_kw()
 
     async def run(self, argv: list[str], check: bool = False, timeout: float = 25,
-                  input: bytes | None = None) -> tuple[int, str]:
+                  input: bytes | None = None, raw: bool = False) -> tuple[int, str]:
         cmd, kw = self.wrap(argv)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.DEVNULL if input is None else asyncio.subprocess.PIPE,
@@ -443,7 +448,7 @@ class Box:
             raise RuntimeError(f"{self.label}: SSH connection failed — {err.decode(errors='replace').strip()[-300:]}")
         if check and proc.returncode:
             raise RuntimeError(err.decode(errors="replace").strip() or f"{argv[0]} failed")
-        return proc.returncode or 0, out.decode(errors="replace")
+        return proc.returncode or 0, (out if raw else out.decode(errors="replace"))
 
     async def tmux(self, *args: str, check: bool = False) -> str:
         return (await self.run(["tmux", *args], check=check))[1]
@@ -714,7 +719,7 @@ class Box:
             else:
                 rec["claude_id"] = str(uuid.uuid4())
                 cmd += f" --session-id {rec['claude_id']}"
-            cmd += " --settings " + shlex.quote(CLAUDE_SETTINGS)
+            cmd += " --settings " + shlex.quote(CLAUDE_SETTINGS) + " --append-system-prompt " + shlex.quote(CLAUDE_PROMPT)
         s["sessions"][name] = rec
         self.save_sessions(s)
         return cwd, cmd, {"DEVBOX_SESSION_KEY": rec["key"]}
@@ -1711,6 +1716,151 @@ async def api_logs(req):
                               "bytes": sum(f.stat().st_size for f in files if f.exists())})
 
 
+# ---------------------------------------------------------------- files (Files panel of a session)
+# Read and written on the session's host as the console user: no more than its shell can do anyway.
+
+FS_MAX = 25 * 1024 * 1024
+# every file script starts with this: "~/x" (as claude prints paths) is the host user's home
+FS_HOME = 'p=$1; case $p in "~"|"~"/*) p=$HOME${p#"~"};; esac; shift; set -- "$p" "$@"\n'
+FS_LIST_MAX = 3000
+# $1 = dir. One line per entry: type(d/f/l) TAB size TAB mtime TAB name. GNU find, else a portable loop.
+FS_LIST_SH = FS_HOME + r"""
+cd "$1" 2>/dev/null || { echo "no such folder: $1" >&2; exit 2; }
+printf 'p\t0\t0\t%s\n' "$(pwd -P)"
+if find . -maxdepth 0 -printf '' 2>/dev/null; then
+  find . -mindepth 1 -maxdepth 1 -printf '%y\t%s\t%T@\t%f\n' 2>/dev/null | head -n $2
+else
+  for f in .* *; do
+    case "$f" in .|..) continue ;; esac
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    if [ -L "$f" ]; then t=l; elif [ -d "$f" ]; then t=d; else t=f; fi
+    m=$(stat -c '%s %Y' "$f" 2>/dev/null || stat -f '%z %m' "$f")
+    printf '%s\t%s\t%s\t%s\n' "$t" "${m%% *}" "${m##* }" "$f"
+  done | head -n $2
+fi
+"""
+# $1 = dir, $2 = minutes: files changed lately under it (skipping .git, node_modules, venvs, caches)
+FS_RECENT_SH = FS_HOME + r"""
+cd "$1" 2>/dev/null || exit 2
+find . \( -name .git -o -name node_modules -o -name .venv -o -name venv -o -name __pycache__ -o -name .cache \
+       -o -name .mypy_cache -o -name .pytest_cache -o -name dist -o -name build \) -prune -o \
+     -type f -mmin -$2 -print 2>/dev/null | head -n 2000 | while IFS= read -r f; do
+  m=$(stat -c '%s %Y' "$f" 2>/dev/null || stat -f '%z %m' "$f")
+  printf 'f\t%s\t%s\t%s\n' "${m%% *}" "${m##* }" "${f#./}"
+done
+"""
+# $1 = file: "<size> <mtime>" (also the version token that guards saves)
+FS_STAT_SH = FS_HOME + r"""[ -f "$1" ] || exit 2; stat -c '%s %Y' "$1" 2>/dev/null || stat -f '%z %m' "$1" """
+# $1 = file, $2 = expected "<size> <mtime>" or "" for a new file. Writes in place (keeps mode and owner).
+FS_WRITE_SH = FS_HOME + r"""
+f="$1"
+cur=$(stat -c '%s %Y' "$f" 2>/dev/null || stat -f '%z %m' "$f" 2>/dev/null)
+if [ "$cur" != "$2" ]; then printf 'conflict\t%s' "$cur"; exit 9; fi
+mkdir -p "$(dirname "$f")" && cat > "$f" || exit 3
+stat -c '%s %Y' "$f" 2>/dev/null || stat -f '%z %m' "$f"
+"""
+FS_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+            "svg": "image/svg+xml", "bmp": "image/bmp", "ico": "image/x-icon", "pdf": "application/pdf",
+            "mp4": "video/mp4", "webm": "video/webm", "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg"}
+
+
+def fs_path(req) -> str:
+    p = req.query.get("path", "")
+    if not (p.startswith("/") or p == "~" or p.startswith("~/")) or "\0" in p:
+        raise web.HTTPBadRequest(text="absolute path required")
+    return p
+
+
+def _fs_rows(raw: str, prefix: str = "") -> list[dict]:
+    out = []
+    for ln in raw.splitlines():
+        parts = ln.split("\t", 3)
+        if len(parts) != 4:
+            continue
+        t, size, mtime, name = parts
+        try:
+            out.append({"name": name, "type": {"d": "dir", "l": "link"}.get(t, "file"),
+                        "size": int(size or 0), "mtime": int(float(mtime or 0))})
+        except ValueError:
+            continue
+    return out
+
+
+async def api_fs_list(req):
+    b, path = B(req), fs_path(req)
+    rc, out = await b.run(["sh", "-c", FS_LIST_SH, "sh", path, str(FS_LIST_MAX)], timeout=30)
+    if rc:
+        raise web.HTTPNotFound(text=f"folder not found: {path}")
+    real = next((ln.split("\t", 3)[3] for ln in out.splitlines() if ln.startswith("p\t")), path)
+    rows = _fs_rows("\n".join(ln for ln in out.splitlines() if not ln.startswith("p\t")))
+    # links: tell folders from files so the panel can open them
+    links = [r["name"] for r in rows if r["type"] == "link"][:200]
+    if links:
+        _, kinds = await b.run(["sh", "-c", 'cd "$1" && shift && for f; do [ -d "$f" ] && echo "d" || echo "f"; done',
+                                "sh", real, *links], timeout=20)
+        for name, k in zip(links, kinds.split()):
+            next(r for r in rows if r["name"] == name)["target"] = "dir" if k == "d" else "file"
+    return web.json_response({"path": real, "entries": rows, "truncated": len(rows) >= FS_LIST_MAX})
+
+
+async def api_fs_recent(req):
+    b, path = B(req), fs_path(req)
+    minutes = max(1, min(int(req.query.get("minutes", "1440")), 60 * 24 * 30))
+    rc, out = await b.run(["sh", "-c", FS_RECENT_SH, "sh", path, str(minutes)], timeout=40)
+    if rc == 2:
+        raise web.HTTPNotFound(text=f"folder not found: {path}")
+    rows = sorted(_fs_rows(out), key=lambda r: -r["mtime"])[:100]
+    return web.json_response({"path": path, "entries": rows})
+
+
+async def api_fs_read(req):
+    """The file's bytes (preview, editor, download). ?download=1 → as an attachment."""
+    b, path = B(req), fs_path(req)
+    rc, st = await b.run(["sh", "-c", FS_STAT_SH, "sh", path])
+    if rc:
+        raise web.HTTPNotFound(text=f"not a file: {path}")
+    size, mtime = (int(x) for x in st.split()[:2])
+    if size > FS_MAX:
+        raise web.HTTPRequestEntityTooLarge(max_size=FS_MAX, actual_size=size)
+    rc, data = await b.run(["sh", "-c", FS_HOME + 'cat -- "$1"', "sh", path], timeout=120, raw=True)
+    if rc:
+        raise web.HTTPForbidden(text=f"cannot read {path}")
+    name = path.rsplit("/", 1)[-1]
+    ctype = FS_TYPES.get(name.rsplit(".", 1)[-1].lower() if "." in name else "", "application/octet-stream")
+    if ctype == "application/octet-stream" and b"\0" not in data[:8000]:
+        ctype = "text/plain; charset=utf-8"
+    disp = "attachment" if req.query.get("download") else "inline"
+    headers = {"Content-Type": ctype, "X-Version": f"{size} {mtime}", "Cache-Control": "no-store",
+               "Content-Disposition": f"{disp}; filename*=UTF-8''{urllib.parse.quote(name)}",
+               "X-Content-Type-Options": "nosniff"}
+    if ctype != "application/pdf":  # (Chrome won't show a PDF in a sandbox)
+        # an SVG (or anything else opened directly) never runs as a page of the console
+        headers["Content-Security-Policy"] = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"
+    return web.Response(body=data, headers=headers)
+
+
+async def api_fs_write(req):
+    """Save from the editor. X-Version must match the file's current "<size> <mtime>" (empty = new file),
+    else 409 with the current version: the file changed meanwhile (e.g. claude edited it)."""
+    b, path = B(req), fs_path(req)
+    data = bytearray()
+    async for chunk in req.content.iter_chunked(64 * 1024):
+        data += chunk
+        if len(data) > FS_MAX:
+            raise web.HTTPRequestEntityTooLarge(max_size=FS_MAX, actual_size=len(data))
+    expected = req.headers.get("X-Version", "")
+    if req.query.get("force"):
+        _, cur = await b.run(["sh", "-c", FS_STAT_SH, "sh", path])
+        expected = cur.strip()
+    rc, out = await b.run(["sh", "-c", FS_WRITE_SH, "sh", path, expected], timeout=60, input=bytes(data))
+    if rc == 9:
+        return web.json_response({"conflict": True, "version": out.split("\t", 1)[-1].strip()}, status=409)
+    if rc:
+        raise web.HTTPForbidden(text=f"cannot write {path}")
+    b.user.log.write("file.save", host=b.id, path=path, size=len(data))
+    return web.json_response({"version": out.strip()})
+
+
 async def api_dirs(req):
     b = B(req)
     s = b.load_sessions()
@@ -2067,6 +2217,10 @@ def make_app() -> web.Application:
     r.add_post("/api/windows/{wid}/action", api_window_action)
     r.add_get("/api/dirs", api_dirs)
     r.add_post("/api/upload", api_upload)
+    r.add_get("/api/fs/list", api_fs_list)
+    r.add_get("/api/fs/recent", api_fs_recent)
+    r.add_get("/api/fs/read", api_fs_read)
+    r.add_put("/api/fs/write", api_fs_write)
     r.add_get("/api/logs", api_logs)
     r.add_delete("/api/logs", api_logs)
     r.add_get("/api/settings", api_get_settings)

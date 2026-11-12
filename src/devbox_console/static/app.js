@@ -24,12 +24,13 @@ const S = {
 
 // line icon in the text colour (emoji don't match the theme)
 const ICON_HISTORY = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6 8a5.4 5.4 0 1 0 1.5-3.8"/><path d="M2.4 2.6v2.6H5"/><path d="M8 5.2V8l2 1.4"/></svg>';
+const ICON_FOLDER = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.5 1.6H13c.7 0 1.2.5 1.2 1.2v6.3c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z"/></svg>';
 const STATUS_LABEL = { working: "Working", waiting: "Waiting for approval", idle: "Idle", shell: "Shell", dead: "Exited", stopped: "Stopped" };
 const cur = () => S.windows.find((w) => w.name === S.current);
 const hp = (p) => `#/h/${encodeURIComponent(S.hostId)}/${p}`;
 const curHost = () => S.hosts.find((h) => h.id === S.hostId);
 // endpoints that act on one host get ?host=<id>
-const HOST_SCOPED = /^\/(api\/(sessions|shells|windows|dirs|settings|events|upload)|ws\/term)/;
+const HOST_SCOPED = /^\/(api\/(sessions|shells|windows|dirs|settings|events|upload|fs)|ws\/term)/;
 function withHost(path, host = S.hostId) {
   if (!HOST_SCOPED.test(path)) return path;
   return path + (path.includes("?") ? "&" : "?") + "host=" + encodeURIComponent(host);
@@ -585,7 +586,7 @@ function openManage() {
   $$("#manageDlg [data-mg]").forEach((b) => {
     const needsRun = ["interrupt", "send", "text", "copy", "paste", "attach"].includes(b.dataset.mg);
     b.disabled = (needsRun && !w.running) || ((w.external || w.shell) && ["edit", "restart", "resume", "convs"].includes(b.dataset.mg))
-      || (b.dataset.mg === "convs" && !w.saved);
+      || (b.dataset.mg === "convs" && !w.saved) || (b.dataset.mg === "files" && w.external);
   });
   $("#manageDlg").showModal();
 }
@@ -603,6 +604,7 @@ $("#manageDlg").addEventListener("click", async (e) => {
       dlg.close(); await restartSession(w.name, a === "resume");
     }
     if (a === "convs") { dlg.close(); openConversations(w.name); }
+    if (a === "files") { dlg.close(); openFiles(w.name); }
     if (a === "copy") { dlg.close(); term.hasSelection() ? copyText(term.getSelection()) : openScreenText(); }
     if (a === "paste") { dlg.close(); pasteFromClipboard(); }
     if (a === "attach") { dlg.close(); pickFiles(); }
@@ -948,7 +950,12 @@ function route() {
   }
   const [page, arg] = parts;
   const focusHost = hostScoped && page === "sessions" ? S.hostId : null;
-  const r = ["sessions", "hosts", "team", "settings", "term", "shell"].includes(page) ? page : "sessions";
+  const r = ["sessions", "hosts", "team", "settings", "term", "shell", "files"].includes(page) ? page : "sessions";
+  // leaving the Files panel with unsaved edits: ask, and stay if the answer is no
+  if (S.route === "files" && r !== "files" && fx.dirty && !confirm("You have unsaved changes in the Files panel. Leave anyway?")) {
+    history.replaceState(null, "", route.filesHash); return;
+  }
+  if (r === "files") route.filesHash = location.hash;
   const wantKind = r === "shell" ? "shell" : r === "term" ? "tmux" : null;
   if (ws && wantKind !== wsKind) closeWs();
   if (r === "term") {
@@ -969,6 +976,10 @@ function route() {
   else closeWs();
   if (r === "team") { S.unread = 0; renderUnread(); renderBoard(true); }
   if (r === "settings") { loadSettings(); loadLogs(); }
+  if (r === "files") {
+    const dec = (x) => (x ? decodeURIComponent(x) : null);
+    fxRoute(dec(arg), dec(parts[2]), dec(parts[3]));
+  }
   if (r === "sessions") loadOtherHosts();
   renderAll();
   if (focusHost) requestAnimationFrame(() => document.getElementById(`grp-${focusHost}`)?.scrollIntoView({ block: "start" }));
@@ -1046,6 +1057,7 @@ function cardHTML(w, hid) {
       <div class="card-head">
         <span class="tile ${w.shell ? "tile-shell" : ""}">${w.shell ? "$" : esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
         <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.shell ? " · shell, not saved" : w.saved || w.external ? "" : " · unsaved"}</span></div>
+        ${w.external ? "" : `<button class="icon-btn" data-act="files" title="Files of this session">${ICON_FOLDER}</button>`}
         ${w.saved && !w.shell ? `<button class="icon-btn" data-act="convs" title="Claude conversations">${ICON_HISTORY}</button>` : ""}
         ${w.external || w.shell ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
         <button class="icon-btn" data-act="close" title="Close / hide">✕</button>
@@ -1146,6 +1158,7 @@ $("#cards").addEventListener("click", async (e) => {
     return;
   }
   if (act === "convs") return openConversations(name, host);
+  if (act === "files") return openFiles(name, host);
   if (act === "open" || w?.running) return openSession(name, host);
   openEditor(name, host); // a stopped card: show its details
 });
@@ -1275,6 +1288,316 @@ $("#envRows").addEventListener("click", async (e) => {
 $("#copyPubKey").onclick = () => copyText($("#pubKey").textContent);
 $("#apiToken").onclick = (e) => e.target.classList.toggle("blur");
 $("#logoutBtn").onclick = async () => { await api("/api/logout", { method: "POST" }); location.href = "/login"; };
+
+/* ------------------------------------------------------------------ files panel (one per session) */
+// Route: #/h/<host>/files/<session>/<dir>/<file>  (dir and file URI-encoded, file optional)
+const CDN = "https://cdnjs.cloudflare.com/ajax/libs/";
+const CM = CDN + "codemirror/5.65.16/";
+const loaded = {};
+const loadJS = (src) => (loaded[src] ||= new Promise((ok, bad) => {
+  const s = document.createElement("script");
+  s.src = src; s.onload = ok; s.onerror = () => { delete loaded[src]; bad(new Error(`could not load ${src}`)); };
+  document.head.appendChild(s);
+}));
+function loadCSS(href) {
+  if (document.querySelector(`link[href="${href}"]`)) return;
+  const l = document.createElement("link"); l.rel = "stylesheet"; l.href = href; document.head.appendChild(l);
+}
+async function loadAll(files) { for (const f of files) await loadJS(f); } // in order: modes depend on each other
+
+const L = (files, mode) => ({ files: files.map((f) => `${CM}${f}.min.js`), mode });
+const JS = ["mode/javascript/javascript"], XML = ["mode/xml/xml"], CLIKE = ["mode/clike/clike"];
+const JSX = [...XML, ...JS, "mode/jsx/jsx"], SIMPLE = ["addon/mode/simple"];
+const LANG = {
+  js: L(JS, "javascript"), mjs: L(JS, "javascript"), cjs: L(JS, "javascript"), json: L(JS, "application/json"),
+  ts: L(JS, "text/typescript"), jsx: L(JSX, "jsx"), tsx: L(JSX, { name: "jsx", base: { name: "javascript", typescript: true } }),
+  py: L(["mode/python/python"], "python"), sh: L(["mode/shell/shell"], "shell"), bash: L(["mode/shell/shell"], "shell"),
+  zsh: L(["mode/shell/shell"], "shell"), env: L(["mode/shell/shell"], "shell"),
+  md: L(["addon/mode/overlay", ...XML, "mode/markdown/markdown", "mode/gfm/gfm"], "gfm"),
+  yml: L(["mode/yaml/yaml"], "yaml"), yaml: L(["mode/yaml/yaml"], "yaml"),
+  css: L(["mode/css/css"], "css"), scss: L(["mode/css/css"], "text/x-scss"),
+  html: L([...XML, ...JS, "mode/css/css", "mode/htmlmixed/htmlmixed"], "htmlmixed"), htm: L([...XML, ...JS, "mode/css/css", "mode/htmlmixed/htmlmixed"], "htmlmixed"),
+  xml: L(XML, "xml"), svg: L(XML, "xml"), go: L(["mode/go/go"], "go"), rs: L([...SIMPLE, "mode/rust/rust"], "rust"),
+  sql: L(["mode/sql/sql"], "text/x-sql"), toml: L(["mode/toml/toml"], "toml"), rb: L(["mode/ruby/ruby"], "ruby"),
+  c: L(CLIKE, "text/x-csrc"), h: L(CLIKE, "text/x-csrc"), cpp: L(CLIKE, "text/x-c++src"), cc: L(CLIKE, "text/x-c++src"),
+  hpp: L(CLIKE, "text/x-c++src"), java: L(CLIKE, "text/x-java"), cs: L(CLIKE, "text/x-csharp"), kt: L(CLIKE, "text/x-kotlin"),
+  ini: L(["mode/properties/properties"], "properties"), cfg: L(["mode/properties/properties"], "properties"),
+  conf: L(["mode/properties/properties"], "properties"), dockerfile: L([...SIMPLE, "mode/dockerfile/dockerfile"], "dockerfile"),
+};
+const IMG = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
+const VIDEO = new Set(["mp4", "webm"]), AUDIO = new Set(["mp3", "wav", "ogg"]);
+const extOf = (p) => { const n = p.split("/").pop(); return n.toLowerCase() === "dockerfile" ? "dockerfile" : (n.includes(".") ? n.split(".").pop().toLowerCase() : ""); };
+const joinPath = (dir, name) => normPath((dir.endsWith("/") ? dir : dir + "/") + name);
+function normPath(p) {
+  const out = [];
+  for (const part of p.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") out.pop(); else out.push(part);
+  }
+  return (p.startsWith("~") ? "" : "/") + out.join("/");
+}
+const parentOf = (p) => (p === "/" ? "/" : p.replace(/\/[^/]+\/?$/, "") || "/");
+const fsUrl = (path, extra = "") => withHost(`/api/fs/read?path=${encodeURIComponent(path)}${extra}`);
+const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.ceil(n / 1024)} KB` : `${n} B`);
+const fxHash = (host, name, dir, file) =>
+  `#/h/${encodeURIComponent(host)}/files/${encodeURIComponent(name)}/${encodeURIComponent(dir)}${file ? "/" + encodeURIComponent(file) : ""}`;
+
+const fx = { name: null, host: null, root: null, dir: null, file: null, entries: [], tab: "browse",
+             version: null, cm: null, dirty: false, md: false, timer: null };
+
+// the session's folder: where its pane is now (claude's working dir), else where it started
+function sessionDir(name, host = S.hostId) {
+  const w = findWin(name, host);
+  return w?.path || w?.cwd || "~";
+}
+function openFiles(name, host = S.hostId, file = null) {
+  const dir = file ? parentOf(file) : sessionDir(name, host);
+  go(fxHash(host, name, dir, file));
+}
+
+function fxRoute(name, dir, file) {
+  const same = fx.name === name && fx.host === S.hostId;
+  if (!same) Object.assign(fx, { name, host: S.hostId, root: sessionDir(name), entries: [], file: null, tab: "browse" });
+  $("#fxTitle").textContent = `· ${findWin(name)?.display || name} · ${S.host}`;
+  const newDir = dir || fx.dir || fx.root;
+  if (newDir !== fx.dir || !same) { fx.dir = newDir; fxList(); }
+  if (file && file !== fx.file) fxOpen(file);
+  else if (!file && fx.file && !same) fxCloseFile();
+  $("#fx").classList.toggle("show-main", !!file);
+  clearInterval(fx.timer);
+  fx.timer = setInterval(() => { if (S.route === "files" && !document.hidden) fxList(true); }, 5000);
+}
+
+async function fxList(quiet = false) {
+  const tab = fx.tab, dir = fx.dir;
+  if (!quiet) $("#fxList").innerHTML = `<li class="muted small">Loading…</li>`;
+  try {
+    const r = tab === "recent"
+      ? await api(`/api/fs/recent?path=${encodeURIComponent(fx.root)}&minutes=1440`)
+      : await api(`/api/fs/list?path=${encodeURIComponent(dir)}`);
+    if (tab !== fx.tab || (tab === "browse" && dir !== fx.dir)) return; // moved on meanwhile
+    if (tab === "browse" && r.path !== fx.dir) fx.dir = r.path; // "~" → real path
+    fx.entries = r.entries; fx.truncated = r.truncated;
+    fxRender();
+    fxWatchOpenFile();
+  } catch (e) { if (!quiet) $("#fxList").innerHTML = `<li class="danger-text small">${esc(e.message)}</li>`; }
+}
+
+function fxIcon(e) {
+  if (e.type === "dir" || e.target === "dir") return "▸";
+  const x = extOf(e.name);
+  return IMG.has(x) ? "▣" : x === "pdf" ? "▤" : LANG[x] ? "‹›" : "·";
+}
+function fxRender() {
+  // breadcrumbs
+  const parts = fx.dir.split("/").filter(Boolean);
+  $("#fxCrumbs").innerHTML = fx.tab === "recent"
+    ? `<span class="muted small">Changed in the last 24 h under <code>${esc(shortPath(fx.root))}</code></span>`
+    : `<button data-dir="/">/</button>` + parts.map((p, i) =>
+        `<button data-dir="${esc("/" + parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("<span>/</span>") +
+      (fx.dir !== fx.root ? ` <button class="fx-home" data-dir="${esc(fx.root)}" title="Session folder">⌂</button>` : "");
+  const q = $("#fxFilter").value.trim().toLowerCase(), hidden = $("#fxHidden").checked;
+  let list = fx.entries.filter((e) => (hidden || !e.name.split("/").pop().startsWith(".")) && (!q || e.name.toLowerCase().includes(q)));
+  if (fx.tab === "browse") list.sort((a, b) => ((b.type === "dir" || b.target === "dir") - (a.type === "dir" || a.target === "dir")) || a.name.localeCompare(b.name));
+  const open = fx.file;
+  setHTML($("#fxList"), (fx.tab === "browse" && fx.dir !== "/" ? `<li data-up="1"><span class="ico">↰</span><span class="nm">..</span></li>` : "") +
+    list.map((e) => {
+      const path = fx.tab === "recent" ? joinPath(fx.root, e.name) : joinPath(fx.dir, e.name);
+      const isDir = e.type === "dir" || e.target === "dir";
+      return `<li class="${path === open ? "active" : ""}" data-path="${esc(path)}" ${isDir ? 'data-isdir="1"' : ""}>
+        <span class="ico">${fxIcon(e)}</span><span class="nm" title="${esc(e.name)}">${esc(e.name)}</span>
+        <span class="fx-sz">${isDir ? "" : kb(e.size)}</span><span class="fx-t">${esc(ago(e.mtime))}</span></li>`;
+    }).join("") + (fx.truncated ? `<li class="muted small">… more entries than shown</li>` : "") ||
+    `<li class="muted small">${fx.tab === "recent" ? "Nothing changed in the last 24 hours." : "Empty folder."}</li>`);
+}
+
+function fxCloseFile() {
+  fx.file = null; fx.version = null; fx.cm = null; fx.dirty = false;
+  $("#fxName").textContent = ""; $("#fxMeta").textContent = "";
+  ["#fxMd", "#fxReload", "#fxSave", "#fxNewTab", "#fxDownload"].forEach((s) => $(s).classList.add("hidden"));
+  $("#fxBody").innerHTML = `<div class="empty">Pick a file on the left.</div>`;
+}
+const fxLeaveOk = () => !fx.dirty || confirm("You have unsaved changes in this file. Discard them?");
+
+async function fxOpen(path) {
+  fx.file = path; fx.dirty = false; fx.cm = null; fx.md = false;
+  const name = path.split("/").pop(), x = extOf(path), url = fsUrl(path), body = $("#fxBody");
+  $("#fxName").textContent = name; $("#fxMeta").textContent = shortPath(parentOf(path));
+  $("#fxSave").classList.add("hidden"); $("#fxMd").classList.add("hidden"); $("#fxReload").classList.add("hidden");
+  $("#fxNewTab").classList.remove("hidden"); $("#fxDownload").classList.remove("hidden");
+  fxRender();
+  if (IMG.has(x)) { body.innerHTML = `<div class="fx-media"><img src="${esc(url)}" alt="${esc(name)}"></div>`; return fxStat(path); }
+  if (x === "pdf") { body.innerHTML = `<iframe class="fx-pdf" src="${esc(url)}" title="${esc(name)}"></iframe>`; return fxStat(path); }
+  if (VIDEO.has(x)) { body.innerHTML = `<div class="fx-media"><video src="${esc(url)}" controls></video></div>`; return fxStat(path); }
+  if (AUDIO.has(x)) { body.innerHTML = `<div class="fx-media"><audio src="${esc(url)}" controls></audio></div>`; return fxStat(path); }
+  body.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const r = await fetch(url);
+    if (r.status === 401) { location.href = "/login"; return; }
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    if (fx.file !== path) return;
+    fx.version = r.headers.get("X-Version");
+    fxMeta(fx.version);
+    if (!(r.headers.get("Content-Type") || "").startsWith("text/")) {
+      body.innerHTML = `<div class="empty">Binary file — no preview.<br><br><button class="btn" data-fx="download">Download</button></div>`;
+      return;
+    }
+    const text = await r.text();
+    if (fx.file !== path) return;
+    await fxEditor(text, x);
+    if (x === "md") fxMarkdown(true); // reports read better rendered; "Edit" shows the source
+  } catch (e) { if (fx.file === path) body.innerHTML = `<div class="empty danger-text">${esc(e.message)}</div>`; }
+}
+function fxMeta(version) {
+  const [size, mtime] = (version || "").split(" ").map(Number);
+  $("#fxMeta").textContent = `${shortPath(parentOf(fx.file))}${size >= 0 && version ? ` · ${kb(size)} · ${ago(mtime)}` : ""}`;
+}
+async function fxStat(path) { // media: size/time from the listing when it is there
+  const e = fx.entries.find((x) => joinPath(fx.tab === "recent" ? fx.root : fx.dir, x.name) === path);
+  if (e) fxMeta(`${e.size} ${e.mtime}`);
+}
+
+async function fxEditor(text, x) {
+  const body = $("#fxBody");
+  try {
+    loadCSS(`${CM}codemirror.min.css`);
+    await loadAll([`${CM}codemirror.min.js`, `${CM}addon/edit/matchbrackets.min.js`, `${CM}addon/edit/closebrackets.min.js`,
+                   ...(LANG[x]?.files || [])]);
+  } catch (e) { // no CDN: still show the text
+    body.innerHTML = `<pre class="fx-pre">${esc(text)}</pre>`; toast(e.message); return;
+  }
+  body.innerHTML = "";
+  const big = text.length > 2_000_000;
+  fx.cm = CodeMirror(body, {
+    value: text, mode: big ? null : LANG[x]?.mode || null, theme: "devbox", lineNumbers: true, readOnly: big,
+    matchBrackets: true, autoCloseBrackets: true, lineWrapping: isMobile() || x === "md" || x === "txt",
+    indentUnit: ["py", "go", "rs", "java", "c", "cpp", "cs"].includes(x) ? 4 : 2, tabSize: 4,
+    extraKeys: { "Ctrl-S": () => fxSave(), "Cmd-S": () => fxSave() },
+  });
+  fx.cm.on("change", () => { if (!fx.dirty) { fx.dirty = true; fxButtons(); } });
+  fxButtons();
+  if (big) toast("Large file: opened read-only");
+  requestAnimationFrame(() => fx.cm?.refresh());
+}
+function fxButtons() {
+  $("#fxSave").classList.toggle("hidden", !fx.cm || fx.md);
+  $("#fxSave").disabled = !fx.dirty;
+  $("#fxSave").textContent = fx.dirty ? "Save" : "Saved";
+  $("#fxReload").classList.toggle("hidden", !fx.cm);
+  $("#fxMd").classList.toggle("hidden", extOf(fx.file || "") !== "md" || !fx.cm);
+  $("#fxMd").textContent = fx.md ? "Edit" : "Preview";
+  $("#fxName").textContent = (fx.file || "").split("/").pop() + (fx.dirty ? " •" : "");
+}
+
+async function fxMarkdown(on) {
+  fx.md = on;
+  const body = $("#fxBody");
+  body.querySelector(".fx-md")?.remove();
+  body.querySelector(".CodeMirror")?.classList.toggle("hidden", on);
+  fxButtons();
+  if (!on) { requestAnimationFrame(() => fx.cm?.refresh()); return; }
+  try { await loadAll([`${CDN}marked/12.0.2/marked.min.js`, `${CDN}dompurify/3.1.6/purify.min.js`]); }
+  catch (e) { toast(e.message); return fxMarkdown(false); }
+  const div = document.createElement("div");
+  div.className = "fx-md";
+  div.innerHTML = DOMPurify.sanitize(marked.parse(fx.cm.getValue()));
+  const base = parentOf(fx.file);
+  div.querySelectorAll("img[src]").forEach((img) => { // pictures next to the report
+    const src = img.getAttribute("src");
+    if (!/^(https?:|data:)/.test(src)) img.src = fsUrl(src.startsWith("/") ? src : joinPath(base, src));
+  });
+  div.querySelectorAll("a[href]").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+  body.appendChild(div);
+}
+
+async function fxSave(force = false) {
+  if (!fx.cm || !fx.file || (!fx.dirty && !force)) return;
+  const path = fx.file, btn = $("#fxSave");
+  btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    const r = await fetch(withHost(`/api/fs/write?path=${encodeURIComponent(path)}${force ? "&force=1" : ""}`), {
+      method: "PUT", body: fx.cm.getValue(), headers: { "X-Version": fx.version || "", "Content-Type": "text/plain; charset=utf-8" } });
+    if (r.status === 409) {
+      if (confirm("This file changed on disk after you opened it (claude may have edited it).\n\nOK = overwrite it with your version\nCancel = keep editing (use Reload to see the disk version)")) return fxSave(true);
+      fxButtons(); return;
+    }
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    fx.version = (await r.json()).version; fx.dirty = false;
+    fxMeta(fx.version); toast("Saved");
+  } catch (e) { toast(`Save failed: ${e.message}`); }
+  fxButtons();
+}
+
+// the open file changed on disk (claude edited it): reload it, unless you have unsaved edits
+function fxWatchOpenFile() {
+  if (!fx.file || !fx.cm || fx.tab !== "browse" || parentOf(fx.file) !== fx.dir) return;
+  const e = fx.entries.find((x) => joinPath(fx.dir, x.name) === fx.file);
+  if (!e || !fx.version || `${e.size} ${e.mtime}` === fx.version) return;
+  if (fx.dirty) { $("#fxMeta").textContent = "⚠ changed on disk — Reload to see it (your edits are not saved)"; return; }
+  const pos = fx.cm.getScrollInfo();
+  fxOpen(fx.file).then(() => fx.cm?.scrollTo(pos.left, pos.top));
+}
+
+$("#fxList").addEventListener("click", (e) => {
+  const li = e.target.closest("li"); if (!li) return;
+  if (li.dataset.up) { fx.dir = parentOf(fx.dir); return go(fxHash(fx.host, fx.name, fx.dir, null)); }
+  const path = li.dataset.path; if (!path) return;
+  if (li.dataset.isdir) { $("#fxFilter").value = ""; if (fx.tab === "recent") fxTab("browse"); return go(fxHash(fx.host, fx.name, path, null)); }
+  if (path === fx.file) return $("#fx").classList.add("show-main");
+  if (!fxLeaveOk()) return;
+  fx.dirty = false;
+  go(fxHash(fx.host, fx.name, fx.tab === "recent" ? fx.dir : fx.dir, path));
+});
+$("#fxCrumbs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-dir]"); if (!b) return;
+  go(fxHash(fx.host, fx.name, b.dataset.dir, fx.file));
+});
+function fxTab(t) {
+  fx.tab = t; $$("#fxTabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === t)); fxList();
+}
+$("#fxTabs").addEventListener("click", (e) => { const b = e.target.closest("[data-t]"); if (b) fxTab(b.dataset.t); });
+$("#fxFilter").addEventListener("input", fxRender);
+$("#fxHidden").addEventListener("change", fxRender);
+$("#fxRefresh").onclick = () => fxList();
+$("#fxSave").onclick = () => fxSave();
+$("#fxReload").onclick = () => { if (fx.file && fxLeaveOk()) { fx.dirty = false; fxOpen(fx.file); } };
+$("#fxMd").onclick = () => fxMarkdown(!fx.md);
+$("#fxNewTab").onclick = () => fx.file && window.open(fsUrl(fx.file), "_blank", "noopener");
+$("#fxDownload").onclick = () => fx.file && (location.href = fsUrl(fx.file, "&download=1"));
+$("#fxBody").addEventListener("click", (e) => { if (e.target.closest('[data-fx="download"]')) $("#fxDownload").click(); });
+$("#fxBack").onclick = () => { $("#fx").classList.remove("show-main"); };
+$("#fxTerm").onclick = () => { if (fxLeaveOk()) { fx.dirty = false; go(termHash(fx.host, fx.name)); } };
+$("#filesBtn").onclick = () => S.current && openFiles(S.current);
+window.addEventListener("beforeunload", (e) => { if (fx.dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+/* file paths printed in the terminal (e.g. by claude) are links: open them in the Files panel */
+const LINK_EXT = "png|jpe?g|gif|webp|svg|bmp|pdf|mp4|webm|mp3|wav|md|txt|log|csv|tsv|json|ya?ml|toml|ini|cfg|conf|html?|css|scss|" +
+  "js|mjs|cjs|jsx|ts|tsx|py|ipynb|sh|bash|go|rs|rb|java|kt|c|h|cc|cpp|hpp|cs|sql|xml|env|lock|diff|patch";
+const PATH_RE = new RegExp(`(?<![\\w/.~-])((?:~|\\.{1,2})?/?(?:[\\w.@%+-]+/)*[\\w.@%+-]+\\.(?:${LINK_EXT}))(?![\\w/])`, "gi");
+term.registerLinkProvider({
+  provideLinks(y, cb) {
+    if (S.route !== "term") return cb(undefined);
+    const line = term.buffer.active.getLine(y - 1);
+    if (!line) return cb(undefined);
+    const text = line.translateToString(true), links = [];
+    for (const m of text.matchAll(PATH_RE)) {
+      const raw = m[1];
+      if (/^\.\.?$/.test(raw) || (!raw.includes("/") && !/^[\w.-]+\.\w+$/.test(raw))) continue;
+      const start = m.index + m[0].indexOf(raw);
+      links.push({
+        range: { start: { x: start + 1, y }, end: { x: start + raw.length, y } }, text: raw,
+        decorations: { underline: true, pointerCursor: true },
+        activate: () => {
+          const w = cur(); if (!w) return;
+          const base = w.path || w.cwd || "~";
+          const abs = raw.startsWith("/") || raw.startsWith("~") ? normPath(raw) : joinPath(base, raw);
+          openFiles(w.name, S.hostId, abs.startsWith("~") ? raw.replace(/\/+$/, "") : abs);
+        },
+      });
+    }
+    cb(links.length ? links : undefined);
+  },
+});
 
 /* ------------------------------------------------------------------ palette (Ctrl K) */
 let palItems = [], palSel = 0;
