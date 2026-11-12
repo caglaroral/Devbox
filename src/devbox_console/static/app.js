@@ -105,6 +105,10 @@ term.loadAddon(fit);
 term.loadAddon(new WebLinksAddon.WebLinksAddon());
 try { term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = "11"; } catch {}
 term.open($("#term"));
+// phone keyboards: no autocorrect / suggestions in the terminal. Otherwise at every space the keyboard swaps
+// the word for its "corrected" version, which reaches the terminal as erase + retype. (✎ Type keeps autocorrect.)
+if (term.textarea) for (const [k, v] of Object.entries({ autocorrect: "off", autocapitalize: "off", autocomplete: "off", spellcheck: "false" }))
+  term.textarea.setAttribute(k, v);
 
 // OSC 52: tmux copy-mode (set-clipboard) and many TUIs push copied text this way.
 term.parser.registerOscHandler(52, (data) => {
@@ -279,8 +283,8 @@ $("#textBtn").onclick = () => openScreenText();
     const step = (now) => {
       const dt = Math.min(48, now - last); last = now;
       acc += vel * dt; scrollBy();
-      vel *= Math.pow(0.996, dt); // ~1.5 s to a stop
-      if (Math.abs(vel) > 0.03) glideRaf = requestAnimationFrame(step); else stopGlide();
+      vel *= Math.pow(0.993, dt); // short glide (~0.5 s) …
+      if (Math.abs(vel) > 0.12) glideRaf = requestAnimationFrame(step); else stopGlide(); // … and a clean stop, no slow crawl
     };
     glideRaf = requestAnimationFrame(step);
   }
