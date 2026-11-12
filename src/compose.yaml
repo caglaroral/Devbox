@@ -25,6 +25,7 @@ services:
       DEVBOX_LOCAL_LABEL: ${DEVBOX_LOCAL_LABEL:-devbox}
       DEVBOX_PUBLIC_URL: ${DEVBOX_PUBLIC_URL:-http://localhost:7700}
       DEVBOX_USERS: ${DEVBOX_USERS:-}
+      DEVBOX_ALLOW_ROOT: ${DEVBOX_ALLOW_ROOT:-0}
       DEVBOX_PROJECTS: ${DEVBOX_PROJECTS:-~}
       VAULT_ADDR: http://vault:8200
       # External Vault instead of the bundled one: set VAULT_ADDR + VAULT_TOKEN (+ VAULT_MOUNT).
