@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -16,22 +16,22 @@
   <aside id="sidebar">
     <div class="brand">
       <div class="logo">&gt;_</div><b>devbox</b><span class="muted small">console</span>
-      <button class="icon-btn only-mobile" id="closeSidebar" aria-label="Kapat">✕</button>
+      <button class="icon-btn only-mobile" id="closeSidebar" aria-label="Close">✕</button>
     </div>
-    <button class="search" id="openPalette"><span>⌕ Ara veya çalıştır…</span><kbd>Ctrl K</kbd></button>
+    <button class="search" id="openPalette"><span>⌕ Search or run…</span><kbd>Ctrl K</kbd></button>
     <nav>
       <a href="#/sessions" data-nav="sessions"><span class="ico">▦</span>Sessions<span class="count" id="sessionCount">0</span></a>
+      <a href="#/hosts" data-nav="hosts"><span class="ico">⇄</span>Hosts<span class="count" id="hostCount">0</span></a>
       <a href="#/team" data-nav="team"><span class="ico">☺</span>Team<span class="count hidden" id="unread">0</span></a>
       <a href="#/settings" data-nav="settings"><span class="ico">⚙</span>Settings</a>
     </nav>
     <ul id="shellItem" class="winlist"><li><span class="ico">$</span><span class="nm">Shell</span></li></ul>
     <div class="section-title"><span>Hosts &amp; sessions</span>
-      <span><button class="icon-btn" id="newSessionBtn" title="Seçili host'ta yeni oturum">＋</button><button class="icon-btn" id="newHostBtn" title="Uzak makine ekle">⇄＋</button></span></div>
+      <span><button class="icon-btn" id="newSessionBtn" title="New session on the selected host">＋</button><button class="icon-btn" id="newHostBtn" title="Add remote host">⇄＋</button></span></div>
     <ul id="hostList" class="winlist tree"></ul>
-    <div class="legend muted small"><span><i class="dot s-working"></i>çalışıyor</span><span><i class="dot s-waiting"></i>onay bekliyor</span><span><i class="dot s-idle"></i>boşta</span><span><i class="dot s-stopped"></i>durdu</span></div>
     <div class="sidebar-foot">
       <div class="who"><span class="avatar" id="avatar">?</span><div class="who-txt"><b id="whoUser"></b><span class="muted small" id="whoHost"></span></div>
-        <button class="icon-btn" id="logoutBtn" title="Çıkış yap">⏻</button></div>
+        <button class="icon-btn" id="logoutBtn" title="Log out">⏻</button></div>
     </div>
   </aside>
   <div id="scrim"></div>
@@ -40,7 +40,7 @@
     <!-- terminal view (tmux session or plain shell) -->
     <section id="view-term" class="view">
       <header class="term-head">
-        <button class="icon-btn only-mobile" data-menu aria-label="Menü">☰</button>
+        <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
         <div class="head-main">
           <div class="head-title"><b id="tDisplay"></b><code id="tName"></code></div>
           <div class="head-meta">
@@ -50,13 +50,13 @@
           </div>
         </div>
         <div class="head-actions">
-          <button class="btn" id="copyBtn" title="Seçimi kopyala (Ctrl+Shift+C)">Kopyala</button>
-          <button class="btn" id="pasteBtn" title="Yapıştır (Ctrl+Shift+V)">Yapıştır</button>
-          <button class="btn" id="textBtn" title="Ekranı metin olarak aç (seç/kopyala)">Metin</button>
-          <button class="btn" id="fontMinus" title="Yazı küçült">A−</button>
-          <button class="btn" id="fontPlus" title="Yazı büyüt">A+</button>
+          <button class="btn" id="copyBtn" title="Copy selection (Ctrl+Shift+C)">Copy</button>
+          <button class="btn" id="pasteBtn" title="Paste (Ctrl+Shift+V)">Paste</button>
+          <button class="btn" id="textBtn" title="Open the screen as text (select/copy)">Text</button>
+          <button class="btn" id="fontMinus" title="Smaller font">A−</button>
+          <button class="btn" id="fontPlus" title="Larger font">A+</button>
         </div>
-        <button class="btn" id="manageBtn" title="Oturumu yönet">⋯</button>
+        <button class="btn" id="manageBtn" title="Manage session">⋯</button>
       </header>
       <div id="termWrap"><div id="term"></div><div id="termOverlay" class="hidden"></div></div>
       <div id="keybar">
@@ -72,9 +72,9 @@
         <button data-key="shifttab">⇧Tab</button>
         <button data-key="pgup">PgUp</button>
         <button data-key="pgdn">PgDn</button>
-        <button data-action="select">Seç</button>
-        <button data-action="paste">Yapıştır</button>
-        <button data-action="compose">✎ Yaz</button>
+        <button data-action="select">Select</button>
+        <button data-action="paste">Paste</button>
+        <button data-action="compose">✎ Type</button>
         <button data-action="manage">⋯</button>
       </div>
     </section>
@@ -82,43 +82,55 @@
     <!-- sessions vault -->
     <section id="view-sessions" class="view">
       <header class="page-head">
-        <button class="icon-btn only-mobile" data-menu aria-label="Menü">☰</button>
+        <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
         <h1>Sessions <span class="muted h1-host" id="vaultHost"></span></h1>
-        <input id="sessFilter" class="filter" type="search" placeholder="Ara: ad, klasör, sağlayıcı…" autocomplete="off">
+        <input id="sessFilter" class="filter" type="search" placeholder="Search: name, folder, provider…" autocomplete="off">
         <div class="grow hide-mobile"></div>
-        <button class="btn primary" id="newSessionBtn2">＋ Yeni<span class="hide-mobile"> oturum</span></button>
+        <button class="btn primary" id="newSessionBtn2">＋ New<span class="hide-mobile"> session</span></button>
       </header>
       <div class="vault-tools">
         <div class="seg" id="sessView">
-          <button data-f="all" class="on">Tümü</button><button data-f="running">Çalışan</button><button data-f="stopped">Durmuş</button><button data-f="hidden" id="hiddenSeg">Gizli</button>
+          <button data-f="all" class="on">All</button><button data-f="running">Running</button><button data-f="stopped">Stopped</button><button data-f="hidden" id="hiddenSeg">Hidden</button>
         </div>
         <div class="grow"></div>
-        <button class="btn" id="startAllBtn" title="Durmuş tüm kayıtlı oturumları başlat">Hepsini başlat</button>
-        <button class="btn" id="refreshBtn" title="Yenile">⟳</button>
+        <button class="btn" id="startAllBtn" title="Start all stopped saved sessions">Start all</button>
+        <button class="btn" id="refreshBtn" title="Refresh">⟳</button>
       </div>
       <div id="hostBanner" class="hidden"></div>
       <div id="errorBox" class="flash danger hidden"></div>
       <div id="cards" class="cards"></div>
     </section>
 
+    <!-- hosts: CRUD for machines -->
+    <section id="view-hosts" class="view">
+      <header class="page-head">
+        <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
+        <h1>Hosts</h1>
+        <span class="muted small hide-mobile">This machine and remote machines reached over SSH</span>
+        <div class="grow"></div>
+        <button class="btn primary" id="addHostBtn">＋ Add<span class="hide-mobile"> host</span></button>
+      </header>
+      <div id="hostCards" class="cards"></div>
+    </section>
+
     <!-- team board -->
     <section id="view-team" class="view">
       <header class="page-head">
-        <button class="icon-btn only-mobile" data-menu aria-label="Menü">☰</button>
+        <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
         <h1>Team</h1>
-        <span class="muted small hide-mobile">Oturumlar arası mesaj panosu</span>
+        <span class="muted small hide-mobile">Message board between sessions</span>
         <div class="grow"></div>
-        <select id="teamFilter" title="Filtre"><option value="">Tümü</option></select>
+        <select id="teamFilter" title="Filter"><option value="">All</option></select>
       </header>
       <div id="board"></div>
       <form id="composer">
         <div class="composer-row">
           <label>Kime <select id="msgTo"><option value="all">Herkes</option></select></label>
-          <label class="check"><input type="checkbox" id="msgDeliver"> Oturuma da yaz (send-keys)</label>
+          <label class="check"><input type="checkbox" id="msgDeliver"> Also type into the session (send-keys)</label>
         </div>
         <div class="composer-row">
-          <textarea id="msgText" rows="2" placeholder="Mesaj… (Ctrl+Enter gönderir)"></textarea>
-          <button class="btn primary" type="submit">Gönder</button>
+          <textarea id="msgText" rows="2" placeholder="Message… (Ctrl+Enter sends)"></textarea>
+          <button class="btn primary" type="submit">Send</button>
         </div>
       </form>
     </section>
@@ -126,54 +138,54 @@
     <!-- settings -->
     <section id="view-settings" class="view">
       <header class="page-head">
-        <button class="icon-btn only-mobile" data-menu aria-label="Menü">☰</button>
+        <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
         <h1>Settings</h1>
       </header>
       <div class="settings">
         <div class="box">
-          <div class="box-head">API anahtarları / ortam değişkenleri</div>
+          <div class="box-head">API keys / environment variables</div>
           <div class="box-body">
-            <p class="muted small">Oturumlara ortam değişkeni olarak verilir (tmux <code>set-environment -g</code> ve her pencereye <code>-e</code>). Değerler sunucuda 0600 dosyada saklanır ve tekrar gösterilmez. Çalışan oturumlar yeni değeri yeniden başlatılınca görür.</p>
+            <p class="muted small">Passed to sessions as environment variables (tmux <code>set-environment -g</code> and <code>-e</code> on every window). Values are kept in the secret store and never shown again. Running sessions see a new value after a restart.</p>
             <table class="env-table"><tbody id="envRows"></tbody></table>
             <form id="envForm" class="env-form">
               <input id="envName" placeholder="ANTHROPIC_API_KEY" autocomplete="off" spellcheck="false" autocapitalize="characters">
-              <input id="envValue" type="password" placeholder="değer" autocomplete="new-password">
-              <button class="btn primary">Ekle / Güncelle</button>
+              <input id="envValue" type="password" placeholder="value" autocomplete="new-password">
+              <button class="btn primary">Add / update</button>
             </form>
           </div>
         </div>
         <div class="box">
-          <div class="box-head">Yeni oturum varsayılanları</div>
+          <div class="box-head">New session defaults</div>
           <div class="box-body">
             <label class="field">Komut
               <input id="newCmdDefault" placeholder="claude" spellcheck="false"></label>
-            <label class="field">Proje kökü — <span id="rootHost"></span> (klasör önerileri buradan, 3 seviye)
+            <label class="field">Projects root — <span id="rootHost"></span> (folder suggestions come from here, 3 levels)
               <input id="projectsRoot" placeholder="~/Workspace" spellcheck="false"></label>
-            <div class="row-end"><button class="btn primary" id="saveDefaults">Kaydet</button></div>
+            <div class="row-end"><button class="btn primary" id="saveDefaults">Save</button></div>
           </div>
         </div>
         <div class="box">
-          <div class="box-head">Team panosu erişimi</div>
+          <div class="box-head">Team board access</div>
           <div class="box-body">
-            <p class="muted small">Oturumlar <code>DEVBOX_URL</code> ve <code>DEVBOX_TOKEN</code> değişkenlerini otomatik alır; <code>devbox-msg</code> aracı bunları kullanır. Bir makineye kurmak için:
+            <p class="muted small">Sessions get <code>DEVBOX_URL</code> and <code>DEVBOX_TOKEN</code> automatically; the <code>devbox-msg</code> tool uses them. To install it on a machine:
               <code id="msgInstall"></code></p>
             <div class="kv"><span>URL</span><code id="pubUrl"></code></div>
-            <div class="kv"><span>Token</span><code id="apiToken" class="blur" title="Göstermek için tıkla"></code></div>
+            <div class="kv"><span>Token</span><code id="apiToken" class="blur" title="Click to reveal"></code></div>
             <div class="kv"><span>tmux</span><code id="tmuxInfo"></code></div>
-            <p class="muted small">Uzak makinelerdeki oturumların panoya yazabilmesi için bu URL o makinelerden erişilebilir olmalı (<code>DEVBOX_PUBLIC_URL</code>).</p>
+            <p class="muted small">For sessions on remote hosts to post to the board, this URL must be reachable from those hosts (<code>DEVBOX_PUBLIC_URL</code>).</p>
           </div>
         </div>
         <div class="box">
-          <div class="box-head">Gizli bilgi deposu</div>
+          <div class="box-head">Secret store</div>
           <div class="box-body"><div class="kv"><span>Depo</span><code id="storeInfo"></code></div>
-            <p class="muted small">API anahtarları, SSH özel anahtarları ve saklanan host parolaları burada tutulur; özel anahtarlar yalnızca bağlantı için RAM'deki (tmpfs) geçici dosyaya açılır.</p></div>
+            <p class="muted small">API keys, SSH private keys and stored host passwords live here; private keys are only written to a temporary file in RAM (tmpfs) while connecting.</p></div>
         </div>
         <div class="box">
-          <div class="box-head">Konsol SSH anahtarı</div>
+          <div class="box-head">Console SSH key</div>
           <div class="box-body">
-            <p class="muted small">Uzak makinelere bu anahtarla bağlanılır. Host eklerken parola verirseniz otomatik kurulur; vermezseniz aşağıdaki satırı uzak makinedeki <code>~/.ssh/authorized_keys</code> dosyasına ekleyin.</p>
+            <p class="muted small">Remote hosts are reached with this key. It is installed automatically if you give a password when adding a host; otherwise add the line below to <code>~/.ssh/authorized_keys</code> on the remote host.</p>
             <pre class="pubkey" id="pubKey"></pre>
-            <div class="row-end"><button class="btn" id="copyPubKey">Kopyala</button></div>
+            <div class="row-end"><button class="btn" id="copyPubKey">Copy</button></div>
           </div>
         </div>
       </div>
@@ -184,20 +196,20 @@
   <aside id="editor" aria-hidden="true">
     <form id="sessForm" autocomplete="off">
       <header class="ed-head">
-        <h2 id="edTitle">Yeni oturum</h2><div class="grow"></div>
-        <button type="button" class="icon-btn" id="edClose" aria-label="Kapat">✕</button>
+        <h2 id="edTitle">New session</h2><div class="grow"></div>
+        <button type="button" class="icon-btn" id="edClose" aria-label="Close">✕</button>
       </header>
       <div class="ed-body">
         <div class="ed-group">
           <div class="ed-label">Genel</div>
-          <label class="field">Görünen ad <input id="fDisplay" placeholder="Zeynep (Claude)"></label>
-          <label class="field">tmux adı <input id="fName" required pattern="[A-Za-z0-9_.\-]{1,40}" placeholder="claude-3" spellcheck="false" autocapitalize="none"></label>
-          <label class="field">Sağlayıcı / etiket <input id="fProvider" placeholder="Anthropic" list="providerList"></label>
+          <label class="field">Display name <input id="fDisplay" placeholder="Alice (Claude)"></label>
+          <label class="field">tmux name <input id="fName" required pattern="[A-Za-z0-9_.\-]{1,40}" placeholder="claude-3" spellcheck="false" autocapitalize="none"></label>
+          <label class="field">Provider / label <input id="fProvider" placeholder="Anthropic" list="providerList"></label>
           <datalist id="providerList"><option value="Anthropic"><option value="Z.AI"><option value="OpenRouter"><option value="Bedrock"><option value="Vertex"></datalist>
         </div>
         <div class="ed-group">
-          <div class="ed-label">Başlangıç klasörü</div>
-          <label class="field"><span class="muted small">claude bu klasörde açılır (proje kökü)</span>
+          <div class="ed-label">Start folder</div>
+          <label class="field"><span class="muted small">claude opens in this folder (project root)</span>
             <input id="fCwd" required placeholder="~/Workspace/proje" spellcheck="false" autocapitalize="none"></label>
           <div id="dirPick" class="dirpick"></div>
         </div>
@@ -210,14 +222,14 @@
             <button type="button" data-cmd="claude --dangerously-skip-permissions">skip-permissions</button>
             <button type="button" data-cmd="">kabuk</button>
           </div>
-          <label class="check"><input type="checkbox" id="fAutostart"> Konsol açılınca otomatik başlat (claude --continue ile)</label>
+          <label class="check"><input type="checkbox" id="fAutostart"> Start automatically when the console starts (with claude --continue)</label>
         </div>
       </div>
       <footer class="ed-foot">
-        <button type="button" class="btn danger" id="edDelete">Kapat…</button>
+        <button type="button" class="btn danger" id="edDelete">Close…</button>
         <div class="grow"></div>
-        <button type="submit" class="btn" id="edSave" value="save">Kaydet</button>
-        <button type="submit" class="btn primary" id="edSaveStart" value="start">Kaydet ve başlat</button>
+        <button type="submit" class="btn" id="edSave" value="save">Save</button>
+        <button type="submit" class="btn primary" id="edSaveStart" value="start">Save and start</button>
       </footer>
     </form>
   </aside>
@@ -226,8 +238,8 @@
   <aside id="hostEditor" class="side-panel" aria-hidden="true">
     <form id="hostForm" autocomplete="off">
       <header class="ed-head">
-        <h2 id="hTitle">Uzak makine ekle</h2><div class="grow"></div>
-        <button type="button" class="icon-btn" id="hClose" aria-label="Kapat">✕</button>
+        <h2 id="hTitle">Add remote host</h2><div class="grow"></div>
+        <button type="button" class="icon-btn" id="hClose" aria-label="Close">✕</button>
       </header>
       <div class="ed-body">
         <div class="ed-group">
@@ -237,40 +249,40 @@
             <label class="field grow">Host / IP <input id="hHostname" required placeholder="192.168.1.20" spellcheck="false" autocapitalize="none"></label>
             <label class="field port">Port <input id="hPort" type="number" min="1" max="65535" value="22"></label>
           </div>
-          <label class="field">Kullanıcı <input id="hUser" required placeholder="dev" spellcheck="false" autocapitalize="none"></label>
+          <label class="field">User <input id="hUser" required placeholder="dev" spellcheck="false" autocapitalize="none"></label>
         </div>
         <div class="ed-group">
-          <div class="ed-label">Kimlik doğrulama</div>
+          <div class="ed-label">Authentication</div>
           <div class="seg auth-seg" id="hAuth">
-            <button type="button" data-a="password" class="on">Parola</button><button type="button" data-a="key">Özel anahtar</button><button type="button" data-a="manual">Elle</button>
+            <button type="button" data-a="password" class="on">Password</button><button type="button" data-a="key">Private key</button><button type="button" data-a="manual">Manual</button>
           </div>
           <div data-pane="password">
-            <label class="field">Parola <input id="hPassword" type="password" autocomplete="new-password" placeholder="yalnızca bir kez kullanılır"></label>
-            <label class="check"><input type="checkbox" id="hStorePw"> Parolayı Vault'ta sakla ve her bağlantıda parola kullan</label>
-            <p class="muted small" id="hPwHint">Varsayılan: parola saklanmaz; bir kez kullanılarak konsolun SSH anahtarı uzaktaki <code>authorized_keys</code> dosyasına eklenir. Anahtar girişine izin vermeyen makineler için "sakla"yı işaretleyin.</p>
+            <label class="field">Password <input id="hPassword" type="password" autocomplete="new-password" placeholder="used only once"></label>
+            <label class="check"><input type="checkbox" id="hStorePw"> Store the password in Vault and use it for every connection</label>
+            <p class="muted small" id="hPwHint">Default: the password is not stored; it is used once to add the console's SSH key to the remote <code>authorized_keys</code>. Tick "store" for hosts that don't allow key login.</p>
           </div>
           <div data-pane="key" class="hidden">
-            <label class="field">Özel anahtar (OpenSSH) <textarea id="hKey" rows="5" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
-            <p class="muted small">Gizli bilgi deposunda (Vault) saklanır, tekrar gösterilmez.</p>
+            <label class="field">Private key (OpenSSH) <textarea id="hKey" rows="5" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
+            <p class="muted small">Kept in the secret store (Vault), never shown again.</p>
           </div>
           <div data-pane="manual" class="hidden">
-            <p class="muted small">Bu satırı uzak makinedeki <code>~/.ssh/authorized_keys</code> dosyasına ekleyin, sonra Kaydet'e basın:</p>
+            <p class="muted small">Add this line to <code>~/.ssh/authorized_keys</code> on the remote host, then press Save:</p>
             <pre class="pubkey" id="hPub"></pre>
-            <button type="button" class="btn" id="hCopyPub">Kopyala</button>
+            <button type="button" class="btn" id="hCopyPub">Copy</button>
           </div>
           <p class="muted small" id="hAuthNow"></p>
         </div>
         <div class="ed-group hidden" id="hInfoBox">
-          <div class="ed-label">Makine</div>
+          <div class="ed-label">Machine</div>
           <dl class="info" id="hInfo"></dl>
         </div>
       </div>
       <footer class="ed-foot">
-        <button type="button" class="btn danger" id="hDelete">Sil</button>
-        <button type="button" class="btn" id="hTest">Bağlantıyı test et</button>
-        <button type="button" class="btn" id="hShell">SSH aç</button>
+        <button type="button" class="btn danger" id="hDelete">Delete</button>
+        <button type="button" class="btn" id="hTest">Test connection</button>
+        <button type="button" class="btn" id="hShell">Open SSH</button>
         <div class="grow"></div>
-        <button type="submit" class="btn primary" id="hSave">Kaydet ve bağlan</button>
+        <button type="submit" class="btn primary" id="hSave">Save and connect</button>
       </footer>
     </form>
   </aside>
@@ -278,56 +290,56 @@
 
 <!-- dialogs -->
 <dialog id="textDlg" class="wide">
-  <div class="dlg-head"><h2>Ekran metni</h2><div class="grow"></div><button class="btn" id="textClose">Kapat</button></div>
-  <p class="muted small">Seçmek için metne uzun basın / sürükleyin, tutamaçlarla genişletin.</p>
+  <div class="dlg-head"><h2>Screen text</h2><div class="grow"></div><button class="btn" id="textClose">Close</button></div>
+  <p class="muted small">Long-press / drag on the text to select, extend with the handles.</p>
   <textarea id="textArea" readonly spellcheck="false"></textarea>
   <div class="text-actions">
-    <button class="btn primary" id="textCopySel">Seçimi kopyala</button>
-    <button class="btn" id="textCopyAll">Tümünü kopyala</button>
-    <button class="btn" id="textPasteSel">Seçimi terminale yaz</button>
-    <button class="btn" id="textMore">Daha fazla geçmiş</button>
+    <button class="btn primary" id="textCopySel">Copy selection</button>
+    <button class="btn" id="textCopyAll">Copy all</button>
+    <button class="btn" id="textPasteSel">Type selection into terminal</button>
+    <button class="btn" id="textMore">More history</button>
   </div>
 </dialog>
 
 <dialog id="pasteDlg">
   <form method="dialog" id="pasteForm">
-    <h2 id="pasteTitle">Yapıştır</h2>
+    <h2 id="pasteTitle">Paste</h2>
     <p class="muted small" id="pasteHint"></p>
     <textarea id="pasteArea" rows="6" spellcheck="false"></textarea>
-    <label class="check"><input type="checkbox" id="pasteEnter"> Sonuna Enter ekle</label>
-    <div class="row-end"><button class="btn" value="cancel" formnovalidate>Vazgeç</button><button class="btn primary" value="ok">Gönder</button></div>
+    <label class="check"><input type="checkbox" id="pasteEnter"> Append Enter</label>
+    <div class="row-end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Send</button></div>
   </form>
 </dialog>
 
 <dialog id="manageDlg">
-  <h2 id="mgTitle">Oturumu yönet</h2>
+  <h2 id="mgTitle">Manage session</h2>
   <div class="mg-grid">
-    <button class="btn" data-mg="interrupt">Ctrl‑C gönder</button>
-    <button class="btn" data-mg="edit">Düzenle…</button>
-    <button class="btn" data-mg="restart">Yeniden başlat</button>
-    <button class="btn" data-mg="resume">Devam et (--continue)</button>
+    <button class="btn" data-mg="interrupt">Send Ctrl‑C</button>
+    <button class="btn" data-mg="edit">Edit…</button>
+    <button class="btn" data-mg="restart">Restart</button>
+    <button class="btn" data-mg="resume">Resume (--continue)</button>
     <button class="btn" data-mg="text">Ekran metni</button>
-    <button class="btn danger" data-mg="closeask">Kapat…</button>
+    <button class="btn danger" data-mg="closeask">Close…</button>
   </div>
-  <label class="field">Prompt / slash komutu gönder
-    <div class="inline"><input id="mgSend" placeholder="/compact" spellcheck="false" autocapitalize="none"><button class="btn primary" data-mg="send">Gönder</button></div>
+  <label class="field">Send a prompt / slash command
+    <div class="inline"><input id="mgSend" placeholder="/compact" spellcheck="false" autocapitalize="none"><button class="btn primary" data-mg="send">Send</button></div>
   </label>
-  <div class="row-end"><button class="btn" data-mg="close">Kapat</button></div>
+  <div class="row-end"><button class="btn" data-mg="close">Close</button></div>
 </dialog>
 
 <dialog id="closeDlg">
-  <h2 id="clTitle">Oturumu kapat</h2>
+  <h2 id="clTitle">Close session</h2>
   <p class="muted small" id="clInfo"></p>
   <div class="close-opts">
-    <button class="opt" data-cl="hide"><b>Sadece görünümden kaldır</b><span>Makinede çalışmaya devam eder. "Gizli" listesinden istediğiniz zaman geri getirebilirsiniz.</span></button>
-    <button class="opt" data-cl="stop"><b id="clStopT">Durdur</b><span id="clStopD">claude kapanır, kayıt kalır; sonra "Devam" ile kaldığı yerden sürdürebilirsiniz.</span></button>
-    <button class="opt danger" data-cl="delete"><b>Sil</b><span>claude kapanır ve oturum kaydı silinir. Proje klasörüne dokunulmaz.</span></button>
+    <button class="opt" data-cl="hide"><b>Only remove from view</b><span>Keeps running on the machine. Bring it back any time from the "Hidden" list.</span></button>
+    <button class="opt" data-cl="stop"><b id="clStopT">Stop</b><span id="clStopD">claude exits, the saved session stays; "Resume" continues where it left off.</span></button>
+    <button class="opt danger" data-cl="delete"><b>Delete</b><span>claude exits and the saved session is deleted. The project folder is not touched.</span></button>
   </div>
-  <div class="row-end"><button class="btn" data-cl="cancel">Vazgeç</button></div>
+  <div class="row-end"><button class="btn" data-cl="cancel">Cancel</button></div>
 </dialog>
 
 <dialog id="palette">
-  <input id="paletteInput" placeholder="Oturum, sayfa veya komut ara…" autocomplete="off">
+  <input id="paletteInput" placeholder="Search sessions, pages or commands…" autocomplete="off">
   <ul id="paletteList"></ul>
 </dialog>
 

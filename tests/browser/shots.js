@@ -44,6 +44,13 @@ fs.mkdirSync(OUT, { recursive: true });
   await d.click('.card[data-name="waiter"] [data-act="unhide"]'); await d.waitForTimeout(800);
   const back = await d.locator('#hostList li.sess[data-name="waiter"]').count();
   console.log(`hide flow: in tree after hide=${visible}, "gizli" link=${more}, back after unhide=${back}`);
+  await d.goto(U + "/#/hosts"); await d.waitForTimeout(1000); await shot(d, "d10-hosts");
+  const hostCards = await d.locator("#hostCards .host-card").count();
+  console.log("hosts page cards:", hostCards);
+  if (hostCards < 2) errors.push(`hosts page shows ${hostCards} cards, expected local + gpu-box`);
+  await d.click('#hostCards [data-hid="gpu-box"] [data-ha="edit"]'); await d.waitForTimeout(500); await shot(d, "d11-hosts-edit");
+  if (!(await d.locator("#app.host-open").count())) errors.push("edit on the hosts page did not open the host editor");
+  await d.keyboard.press("Escape");
   await d.goto(U + "/#/settings"); await d.waitForTimeout(800); await shot(d, "d6-settings");
   await d.goto(U + "/#/team"); await d.waitForTimeout(800); await shot(d, "d7-team");
 
@@ -63,10 +70,15 @@ fs.mkdirSync(OUT, { recursive: true });
   await m.click("#newHostBtn"); await shot(m, "m6-host-editor");
   // horizontal overflow check on each main view
   const overflow = [];
-  for (const route of ["#/h/local/sessions", "#/team", "#/settings"]) {
+  for (const route of ["#/h/local/sessions", "#/hosts", "#/team", "#/settings"]) {
     await m.goto(U + "/" + route); await m.waitForTimeout(700);
     const w = await m.evaluate(() => [document.documentElement.scrollWidth, innerWidth]);
     if (w[0] > w[1]) overflow.push(`${route}: ${w[0]} > ${w[1]}`);
+  }
+  for (const route of ["#/h/local/sessions", "#/hosts", "#/team", "#/settings"]) {
+    await d.goto(U + "/" + route); await d.waitForTimeout(500);
+    const tr = await d.evaluate(() => (document.body.innerText.match(/[^\n]*[çğıöşüÇĞİÖŞÜ][^\n]*/g) || []).slice(0, 3));
+    if (tr.length) errors.push(`${route}: non-English text: ${tr.join(" | ")}`);
   }
   console.log("overflow:", overflow.length ? overflow : "none");
   console.log("errors:", errors.length ? errors : "none");

@@ -2,7 +2,7 @@
 /* devbox console — client. No build step; xterm.js from CDN.
  * A "session" = saved record (name, display, provider, start folder, command) + tmux window running claude.
  * Hosts: "local" (this machine) + remote machines over SSH; every host has its own sessions.
- * Routes: #/h/<host>/sessions  #/h/<host>/term/<name>  #/h/<host>/shell  #/team  #/settings
+ * Routes: #/h/<host>/sessions  #/h/<host>/term/<name>  #/h/<host>/shell  #/hosts  #/team  #/settings
  */
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -21,7 +21,7 @@ const S = {
   settings: null, dirs: null,
 };
 
-const STATUS_LABEL = { working: "Çalışıyor", waiting: "Onay bekliyor", idle: "Boşta", shell: "Kabuk", dead: "Kapandı", stopped: "Durdu" };
+const STATUS_LABEL = { working: "Working", waiting: "Waiting for approval", idle: "Idle", shell: "Shell", dead: "Exited", stopped: "Stopped" };
 const cur = () => S.windows.find((w) => w.name === S.current);
 const hp = (p) => `#/h/${encodeURIComponent(S.hostId)}/${p}`;
 const curHost = () => S.hosts.find((h) => h.id === S.hostId);
@@ -54,7 +54,7 @@ function toast(msg) {
 
 /* ------------------------------------------------------------------ clipboard */
 async function copyText(text) {
-  if (!text) { toast("Seçili metin yok"); return false; }
+  if (!text) { toast("Nothing selected"); return false; }
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -63,9 +63,9 @@ async function copyText(text) {
     ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
     document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
     const ok = document.execCommand("copy"); ta.remove();
-    if (!ok) { openTextDialog(text, "Kopyalanamadı — buradan seçip kopyalayın"); return false; }
+    if (!ok) { openTextDialog(text, "Could not copy — select and copy from here"); return false; }
   }
-  toast(`Kopyalandı (${text.length} karakter)`);
+  toast(`Copied (${text.length} characters)`);
   return true;
 }
 
@@ -74,7 +74,7 @@ async function pasteFromClipboard() {
     const text = await navigator.clipboard.readText();
     if (text) { term.paste(text); if (!isTouch()) term.focus(); return; }
   } catch { /* permission denied or insecure context */ }
-  openPasteDialog("Yapıştır", "Pano okunamadı. Metni buraya yapıştırın (uzun basın → Yapıştır) ve Gönder'e dokunun.");
+  openPasteDialog("Paste", "Could not read the clipboard. Paste the text here (long-press → Paste) and tap Send.");
 }
 
 /* ------------------------------------------------------------------ terminal */
@@ -140,7 +140,7 @@ function connect() {
   const q = new URLSearchParams({ cols: term.cols, rows: term.rows, ...(shell ? { shell: "1" } : { window: w.id }) });
   wsKind = shell ? "shell" : "tmux";
   wsSess = shell ? null : w.tmux_session;
-  overlay("Bağlanıyor…");
+  overlay("Connecting…");
   ws = new WebSocket(`${proto}://${location.host}${withHost(`/ws/term?${q}`)}`);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); if (!isTouch()) term.focus(); };
@@ -149,16 +149,16 @@ function connect() {
     ws = null;
     if (!wsWanted) return;
     const delay = Math.min(1000 * 2 ** wsRetry++, 15000);
-    overlay(`Bağlantı koptu — ${Math.round(delay / 1000)} sn sonra yeniden denenecek`);
+    overlay(`Disconnected — retrying in ${Math.round(delay / 1000)} s`);
     setTimeout(() => { if (wsWanted && isTermRoute()) connect(); }, delay);
   };
 }
 
 function showStopped(w) {
   term.reset();
-  if (!w) return overlay("Oturum bulunamadı");
-  overlay(`<div class="stopped-box"><b>${esc(w.display)}</b><span>Bu oturum durmuş. Klasör: <code>${esc(shortPath(w.cwd))}</code></span>
-    <div><button class="btn primary" data-ov="resume">Devam ettir (--continue)</button> <button class="btn" data-ov="fresh">Yeni başlat</button></div></div>`, true);
+  if (!w) return overlay("Session not found");
+  overlay(`<div class="stopped-box"><b>${esc(w.display)}</b><span>This session is stopped. Folder: <code>${esc(shortPath(w.cwd))}</code></span>
+    <div><button class="btn primary" data-ov="resume">Resume (--continue)</button> <button class="btn" data-ov="fresh">Start fresh</button></div></div>`, true);
 }
 $("#termOverlay").addEventListener("click", async (e) => {
   const a = e.target.dataset?.ov; if (!a) return;
@@ -251,12 +251,12 @@ $("#keybar").addEventListener("click", (e) => {
   if (a === "select") return term.hasSelection() ? copyText(term.getSelection()) : openScreenText();
   if (a === "paste") return pasteFromClipboard();
   if (a === "manage") return openManage();
-  if (a === "compose") return openPasteDialog("Yaz", "Otomatik düzeltme ve dikte ile rahat yazmak için. Gönder ile terminale aktarılır.", true);
+  if (a === "compose") return openPasteDialog("Type", "Comfortable typing with autocorrect and dictation. Send passes it to the terminal.", true);
 });
 
 /* selection view / paste dialogs */
 let textLines = 300;
-function openTextDialog(text, title = "Ekran metni") {
+function openTextDialog(text, title = "Screen text") {
   $("#textDlg h2").textContent = title;
   const ta = $("#textArea"); ta.value = text;
   if (!$("#textDlg").open) $("#textDlg").showModal();
@@ -286,11 +286,11 @@ async function openScreenText(more = false) {
 const taSelection = () => { const ta = $("#textArea"); return ta.value.slice(ta.selectionStart, ta.selectionEnd); };
 $("#textClose").onclick = () => $("#textDlg").close();
 $("#textCopyAll").onclick = () => copyText($("#textArea").value);
-$("#textCopySel").onclick = () => { const t = taSelection() || String(getSelection() || ""); t ? copyText(t) : toast("Önce metin seçin"); };
+$("#textCopySel").onclick = () => { const t = taSelection() || String(getSelection() || ""); t ? copyText(t) : toast("Select some text first"); };
 $("#textPasteSel").onclick = () => {
   const t = taSelection() || String(getSelection() || "");
-  if (!t) return toast("Önce metin seçin");
-  term.paste(t); $("#textDlg").close(); toast("Terminale yazıldı");
+  if (!t) return toast("Select some text first");
+  term.paste(t); $("#textDlg").close(); toast("Typed into the terminal");
 };
 $("#textMore").onclick = () => openScreenText(true);
 $$(".text-actions .btn").forEach((b) => b.addEventListener("pointerdown", (e) => e.preventDefault())); // keep selection
@@ -328,18 +328,18 @@ function applySnapshot(snap) {
 async function startSession(name, resume = true) {
   try {
     applySnapshot(await sessApi(name, "/start", { method: "POST", body: { resume } }));
-    toast(resume ? "Devam ettiriliyor (--continue)" : "Başlatıldı");
+    toast(resume ? "Resuming (--continue)" : "Started");
     go(hp(`term/${encodeURIComponent(name)}`));
   } catch (e) { toast(e.message); }
 }
 async function stopSession(name, confirmed = false) {
-  if (!confirmed && !confirm(`"${name}" durdurulsun mu? claude kapanır, kayıt kalır; sonra devam ettirebilirsiniz.`)) return false;
-  try { applySnapshot(await sessApi(name, "/stop", { method: "POST" })); toast("Durduruldu"); return true; } catch (e) { toast(e.message); return false; }
+  if (!confirmed && !confirm(`Stop "${name}"? claude exits, the saved session stays; you can resume it later.`)) return false;
+  try { applySnapshot(await sessApi(name, "/stop", { method: "POST" })); toast("Stopped"); return true; } catch (e) { toast(e.message); return false; }
 }
 async function deleteSession(name, confirmed = false) {
-  if (!confirmed && !confirm(`"${name}" silinsin mi? Çalışıyorsa kapatılır ve kayıt silinir. (Proje klasörüne dokunulmaz.)`)) return false;
+  if (!confirmed && !confirm(`Delete "${name}"? It is stopped if running and the saved session is deleted. (The project folder is not touched.)`)) return false;
   try {
-    applySnapshot(await sessApi(name, "", { method: "DELETE" })); toast("Silindi");
+    applySnapshot(await sessApi(name, "", { method: "DELETE" })); toast("Deleted");
     if (S.current === name && S.route === "term") go(hp("sessions"));
     return true;
   } catch (e) { toast(e.message); return false; }
@@ -352,28 +352,28 @@ function openSession(name) {
 async function hideSession(name, hidden = true) {
   try {
     applySnapshot(await sessApi(name, "/hide", { method: "POST", body: { hidden } }));
-    toast(hidden ? "Görünümden kaldırıldı — makinede çalışmaya devam ediyor" : "Geri getirildi");
+    toast(hidden ? "Removed from view — still running on the machine" : "Brought back");
     return true;
   } catch (e) { toast(e.message); return false; }
 }
 
-/* "Kapat…": ask whether to really end it or only remove it from the view */
+/* "Close…": ask whether to really end it or only remove it from the view */
 let clName = null;
 function closeAsk(name) {
   const w = S.windows.find((x) => x.name === name); if (!w) return;
   clName = name;
-  $("#clTitle").textContent = `${w.display} — kapat`;
+  $("#clTitle").textContent = `Close ${w.display}`;
   $("#clInfo").textContent = w.running
-    ? `${w.external ? "Konsol dışında açılmış tmux penceresi" : "Çalışan oturum"} · ${S.host} · ${shortPath(w.cwd)}`
-    : `Durmuş oturum · ${S.host}`;
+    ? `${w.external ? "tmux window opened outside the console" : "Running session"} · ${S.host} · ${shortPath(w.cwd)}`
+    : `Stopped session · ${S.host}`;
   const stop = $('#closeDlg [data-cl="stop"]'), del = $('#closeDlg [data-cl="delete"]'), hide = $('#closeDlg [data-cl="hide"]');
   stop.classList.toggle("hidden", !w.running);
   del.classList.toggle("hidden", !!w.external);
   hide.classList.toggle("hidden", !!w.hidden);
-  $("#clStopT").textContent = w.external ? "Pencereyi kapat" : "Durdur";
+  $("#clStopT").textContent = w.external ? "Close window" : "Stop";
   $("#clStopD").textContent = w.external
-    ? "tmux penceresi ve içindeki program sonlanır (kill-window)."
-    : 'claude kapanır, kayıt kalır; sonra "Devam" ile kaldığı yerden sürdürebilirsiniz.';
+    ? "The tmux window and the program in it are terminated (kill-window)."
+    : 'claude exits, the saved session stays; "Resume" continues where it left off.';
   $("#closeDlg").showModal();
 }
 $("#closeDlg").addEventListener("click", async (e) => {
@@ -407,19 +407,19 @@ $("#manageDlg").addEventListener("click", async (e) => {
   const dlg = $("#manageDlg"), w = cur();
   try {
     if (a === "close") dlg.close();
-    if (a === "interrupt") { await winAction({ action: "interrupt" }); toast("Ctrl‑C gönderildi"); }
+    if (a === "interrupt") { await winAction({ action: "interrupt" }); toast("Ctrl‑C sent"); }
     if (a === "edit") { dlg.close(); openEditor(w.name); }
     if ((a === "restart" || a === "resume") && w.running) {
-      if (!confirm("claude sonlandırılıp aynı klasörde yeniden başlatılsın mı?")) return;
+      if (!confirm("Kill claude and restart it in the same folder?")) return;
       let cmd = w.command || S.settings?.new_window_command || "claude";
       if (a === "resume" && cmd.startsWith("claude") && !cmd.includes("--continue")) cmd += " --continue";
-      await winAction({ action: "respawn", command: cmd }); dlg.close(); toast("Yeniden başlatıldı");
+      await winAction({ action: "respawn", command: cmd }); dlg.close(); toast("Restarted");
     } else if (a === "resume") { dlg.close(); await startSession(w.name, true); }
     else if (a === "restart") { dlg.close(); await startSession(w.name, false); }
     if (a === "text") { dlg.close(); openScreenText(); }
     if (a === "closeask") { dlg.close(); closeAsk(w.name); }
     if (a === "send" && $("#mgSend").value) {
-      await winAction({ action: "send", text: $("#mgSend").value, enter: true }); $("#mgSend").value = ""; toast("Gönderildi");
+      await winAction({ action: "send", text: $("#mgSend").value, enter: true }); $("#mgSend").value = ""; toast("Sent");
     }
   } catch (err) { toast(err.message); }
 });
@@ -439,7 +439,7 @@ async function openEditor(name = null) {
   edName = name;
   const w = name ? S.windows.find((x) => x.name === name) : null;
   const st = await ensureSettings();
-  $("#edTitle").textContent = w ? (w.saved ? "Oturumu düzenle" : "Oturumu kaydet") : "Yeni oturum";
+  $("#edTitle").textContent = w ? (w.saved ? "Edit session" : "Save session") : "New session";
   if (w) {
     $("#fDisplay").value = w.display === w.name ? "" : w.display;
     $("#fName").value = w.name; $("#fProvider").value = w.provider || "";
@@ -453,9 +453,9 @@ async function openEditor(name = null) {
     $("#fCwd").value = "";
   }
   $("#edDelete").classList.toggle("hidden", !w);
-  $("#edSaveStart").textContent = !w ? "Oluştur ve başlat" : w.running ? "Kaydet" : "Kaydet ve başlat";
+  $("#edSaveStart").textContent = !w ? "Create and start" : w.running ? "Save" : "Save and start";
   $("#edSave").classList.toggle("hidden", !!w?.running);
-  $("#edSave").textContent = w ? "Kaydet" : "Sadece kaydet";
+  $("#edSave").textContent = w ? "Save" : "Save only";
   $("#app").classList.add("editor-open"); $("#editor").setAttribute("aria-hidden", "false");
   const d = await loadDirs(true);
   if (!w && !$("#fCwd").value) $("#fCwd").value = d.recent[0] ? shortPath(d.recent[0]) : (d.root || "");
@@ -475,7 +475,7 @@ function renderDirPick() {
   $("#dirPick").innerHTML = list.map(({ p, r }) => {
     const sp = shortPath(p), cut = sp.lastIndexOf("/");
     return `<button type="button" data-dir="${esc(p)}"><span class="ico">${r ? "↺" : "▸"}</span><span class="dp-parent">${esc(sp.slice(0, cut + 1))}</span><b>${esc(sp.slice(cut + 1))}</b></button>`;
-  }).join("") || (q ? `<div class="muted small">Eşleşen klasör yok — tam yolu yazabilirsiniz.</div>` : "");
+  }).join("") || (q ? `<div class="muted small">No matching folder — you can type a full path.</div>` : "");
 }
 $("#fCwd").addEventListener("input", renderDirPick);
 $("#dirPick").addEventListener("click", (e) => {
@@ -498,13 +498,13 @@ $("#sessForm").addEventListener("submit", async (e) => {
     if (!edName) {
       const snap = await api("/api/sessions", { method: "POST", body: { ...body, name, start } });
       applySnapshot(snap); closeEditor();
-      toast(start ? "Oturum açıldı — claude başlatıldı" : "Kaydedildi");
+      toast(start ? "Session opened — claude started" : "Saved");
       if (start) openSession(name);
     } else {
       const was = S.windows.find((x) => x.name === edName);
       applySnapshot(await sessApi(edName, "", { method: "PATCH", body: { ...body, new_name: name } }));
       if (S.current === edName) { S.current = name; history.replaceState(null, "", hp(`term/${encodeURIComponent(name)}`)); }
-      closeEditor(); toast("Kaydedildi");
+      closeEditor(); toast("Saved");
       if (start && was && !was.running) await startSession(name, true);
     }
   } catch (err) { toast(err.message); }
@@ -532,6 +532,7 @@ function hostSessions(h) {
   return h.sessions || [];
 }
 function renderHosts() {
+  renderHostCards();
   const list = S.hosts.length ? S.hosts : [{ id: "local", label: S.host, remote: false }];
   setHTML($("#hostList"), list.map((h) => {
     const all = hostSessions(h);
@@ -539,14 +540,14 @@ function renderHosts() {
     const busy = all.filter((x) => x.status === "working").length;
     return `<li class="host-row ${h.id === S.hostId ? "cur" : ""}" data-host="${esc(h.id)}" title="${esc(h.error || `${h.username || ""}@${h.hostname || ""}`)}">
       <span class="hico">${h.remote ? "⇄" : "⌂"}</span><span class="nm">${esc(h.label)}</span>
-      <span class="dot ${hostDot(h)}" title="${h.error ? "bağlantı yok" : "bağlı"}"></span><span class="tag" title="çalışan / toplam">${busy ? `<b class="busy">${busy}</b>/` : ""}${sess.length}</span>
-      ${h.remote ? `<button class="icon-btn edit" data-hedit="${esc(h.id)}" title="Makineyi düzenle">✎</button>` : ""}
+      <span class="dot ${hostDot(h)}" title="${h.error ? "not connected" : "connected"}"></span><span class="tag" title="working / total">${busy ? `<b class="busy">${busy}</b>/` : ""}${sess.length}</span>
+      ${h.remote ? `<button class="icon-btn edit" data-hedit="${esc(h.id)}" title="Edit host">✎</button>` : ""}
     </li>` + (sess.length ? sess.map((x) => `
     <li class="sess s-${x.status} ${x.running ? "" : "off"} ${S.route === "term" && h.id === S.hostId && x.name === S.current ? "active" : ""}"
         data-host="${esc(h.id)}" data-name="${esc(x.name)}" title="${esc(STATUS_LABEL[x.status] || x.status)}${x.cwd ? " · " + esc(shortPath(x.cwd)) : ""}">
       <span class="dot"></span><span class="nm">${esc(x.display)}</span>
-    </li>`).join("") : `<li class="empty-sess">${h.error ? "bağlanılamıyor" : "oturum yok"}</li>`)
-      + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} gizli (çalışıyor)</li>` : "");
+    </li>`).join("") : `<li class="empty-sess">${h.error ? "cannot connect" : "no sessions"}</li>`)
+      + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} hidden (running)</li>` : "");
   }).join(""));
 }
 $("#hostList").addEventListener("click", (e) => {
@@ -558,6 +559,65 @@ $("#hostList").addEventListener("click", (e) => {
   go(li.dataset.name ? `#/h/${h}/term/${encodeURIComponent(li.dataset.name)}` : `#/h/${h}/sessions`);
 });
 $("#newHostBtn").onclick = () => openHostEditor();
+$("#addHostBtn").onclick = () => openHostEditor();
+
+/* hosts page: list + CRUD for machines (the side panel #hostEditor does create/update) */
+function renderHostCards() {
+  $("#hostCount").textContent = S.hosts.length || 1;
+  if (S.route !== "hosts") return;
+  const list = S.hosts.length ? S.hosts : [{ id: "local", label: S.host, remote: false }];
+  setHTML($("#hostCards"), list.map((h) => {
+    const all = hostSessions(h), i = h.info || {};
+    const busy = all.filter((x) => x.status === "working").length, running = all.filter((x) => x.running).length;
+    const addr = h.remote ? `${h.username}@${h.hostname}${h.port && h.port !== 22 ? ":" + h.port : ""}` : `${h.username || S.user || ""}@${h.hostname || "localhost"}`;
+    const AUTH = { "custom-key": "pasted private key", "password": "password (Vault)", "console-key": "console key", "local": "local" };
+    const miss = h.remote ? [!i.tmux && "tmux", !i.claude && "claude"].filter(Boolean) : [];
+    return `<div class="card host-card" data-hid="${esc(h.id)}">
+      <div class="card-head">
+        <span class="tile">${h.remote ? "⇄" : "⌂"}<span class="dot ${hostDot(h)}" title="${h.error ? "not connected" : "connected"}"></span></span>
+        <div class="card-title"><b>${esc(h.label)}</b><span class="muted small"><code>${esc(addr)}</code></span></div>
+        ${h.remote ? `<button class="icon-btn" data-ha="edit" title="Edit host">✎</button>` : ""}
+      </div>
+      ${h.error ? `<div class="card-path danger-text">${esc(h.error)}</div>` : ""}
+      <div class="card-path">${[i.os, i.tmux, i.claude && "claude " + i.claude.split(" ")[0]].filter(Boolean).map(esc).join(" · ") || (h.remote ? "not probed yet" : "this machine")}
+        ${miss.length ? ` · <span class="danger-text">missing: ${miss.join(", ")}</span>` : ""}</div>
+      <div class="card-foot">
+        <span><span class="lbl">${all.length}</span> session${all.length === 1 ? "" : "s"} · <span class="lbl">${running}</span> running${busy ? ` · <b class="busy">${busy}</b> working` : ""}</span>
+        ${h.remote ? `<span class="pill">${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
+        <span class="grow"></span>
+        ${h.remote ? `<button class="btn danger" data-ha="delete">Delete</button><button class="btn" data-ha="test">Test</button>` : ""}
+        <button class="btn" data-ha="shell">${h.remote ? "SSH" : "Shell"}</button>
+        <button class="btn primary" data-ha="sessions">Sessions</button>
+      </div>
+    </div>`;
+  }).join(""));
+}
+$("#hostCards").addEventListener("click", async (e) => {
+  const card = e.target.closest("[data-hid]"); if (!card) return;
+  const id = card.dataset.hid, a = e.target.closest("[data-ha]")?.dataset.ha || "sessions";
+  const enc = encodeURIComponent(id);
+  if (a === "edit") return openHostEditor(id);
+  if (a === "shell") return go(`#/h/${enc}/shell`);
+  if (a === "sessions") return go(`#/h/${enc}/sessions`);
+  if (a === "test") {
+    const b = e.target.closest("button"); b.disabled = true; b.textContent = "Testing…";
+    try {
+      const info = await api(`/api/hosts/${enc}/test`, { method: "POST" });
+      toast(info.ok ? "Connection OK" : "Connected, but the command failed");
+    } catch (err) { toast(`Connection failed: ${err.message}`); }
+    try { S.hosts = (await api("/api/hosts")).hosts; } catch {}
+    b.disabled = false; b.textContent = "Test"; renderHosts(); renderHostCards();
+  }
+  if (a === "delete") {
+    const h = S.hosts.find((x) => x.id === id);
+    if (!confirm(`Remove "${h?.label}" from the list?\ntmux sessions on the remote host are not touched; saved session definitions also stay in this console.`)) return;
+    try {
+      S.hosts = (await api(`/api/hosts/${enc}`, { method: "DELETE" })).hosts; toast("Removed");
+      if (S.hostId === id) switchHost("local");
+      renderHosts(); renderHostCards();
+    } catch (err) { toast(err.message); }
+  }
+});
 
 function renderHostBanner() {
   const h = curHost(), el = $("#hostBanner");
@@ -568,8 +628,8 @@ function renderHostBanner() {
   el.innerHTML = `<span>⇄ <b>${esc(h.label)}</b> · <code>${esc(h.username)}@${esc(h.hostname)}${h.port && h.port !== 22 ? ":" + h.port : ""}</code></span>
     <span class="muted">${esc(i.os || "")}</span>
     ${i.tmux ? `<span class="pill">${esc(i.tmux)}</span>` : ""}${i.claude ? `<span class="pill">claude ${esc(i.claude.split(" ")[0])}</span>` : ""}
-    ${miss.length ? `<span>⚠ Eksik: <b>${miss.join(", ")}</b> — SSH ile bağlanıp kurun.</span>` : ""}
-    <span class="grow"></span><button class="btn" data-hb="ssh">SSH aç</button><button class="btn" data-hb="edit">Düzenle</button>`;
+    ${miss.length ? `<span>⚠ Missing: <b>${miss.join(", ")}</b> — connect over SSH and install.</span>` : ""}
+    <span class="grow"></span><button class="btn" data-hb="ssh">Open SSH</button><button class="btn" data-hb="edit">Edit</button>`;
 }
 $("#hostBanner").addEventListener("click", (e) => {
   const a = e.target.dataset?.hb;
@@ -588,17 +648,17 @@ $("#hAuth").addEventListener("click", (e) => { const b = e.target.closest("[data
 async function openHostEditor(hid = null) {
   hEditing = hid;
   const h = hid ? S.hosts.find((x) => x.id === hid) : null;
-  $("#hTitle").textContent = h ? "Makineyi düzenle" : "Uzak makine ekle";
+  $("#hTitle").textContent = h ? "Edit host" : "Add remote host";
   $("#hLabel").value = h?.label || ""; $("#hHostname").value = h?.hostname || "";
   $("#hPort").value = h?.port || 22; $("#hUser").value = h?.username || "";
   $("#hPassword").value = ""; $("#hKey").value = ""; $("#hStorePw").checked = h?.auth === "password";
   setAuthPane(h ? "manual" : "password");
-  const AUTH_LABEL = { "custom-key": "yapıştırılmış özel anahtar", "password": "Vault'ta saklanan parola", "console-key": "konsol anahtarı" };
-  $("#hAuthNow").textContent = h ? `Şu an: ${AUTH_LABEL[h.auth] || h.auth}. Değiştirmek için parola ya da yeni anahtar girin.` : "";
+  const AUTH_LABEL = { "custom-key": "pasted private key", "password": "password stored in Vault", "console-key": "console key" };
+  $("#hAuthNow").textContent = h ? `Currently: ${AUTH_LABEL[h.auth] || h.auth}. Enter a password or a new key to change it.` : "";
   $("#hDelete").classList.toggle("hidden", !h);
   $("#hTest").classList.toggle("hidden", !h);
   $("#hShell").classList.toggle("hidden", !h);
-  $("#hSave").textContent = h ? "Kaydet" : "Kaydet ve bağlan";
+  $("#hSave").textContent = h ? "Save" : "Save and connect";
   renderHostInfo(h);
   $("#app").classList.add("host-open"); $("#hostEditor").setAttribute("aria-hidden", "false");
   try { $("#hPub").textContent = (await api("/api/ssh-key")).public_key; } catch {}
@@ -611,9 +671,9 @@ $("#hCopyPub").onclick = () => copyText($("#hPub").textContent);
 function renderHostInfo(h, info = h?.info) {
   $("#hInfoBox").classList.toggle("hidden", !info && !h?.error);
   const row = (k, v, bad) => `<dt>${k}</dt><dd class="${bad ? "bad" : ""}">${esc(v)}</dd>`;
-  $("#hInfo").innerHTML = (h?.error ? row("Durum", h.error, true) : "") + (info ? [
-    row("Hostname", info.host || "?"), row("Sistem", info.os || "?"),
-    row("tmux", info.tmux || "kurulu değil", !info.tmux), row("claude", info.claude || "kurulu değil / PATH'te yok", !info.claude),
+  $("#hInfo").innerHTML = (h?.error ? row("Status", h.error, true) : "") + (info ? [
+    row("Hostname", info.host || "?"), row("System", info.os || "?"),
+    row("tmux", info.tmux || "not installed", !info.tmux), row("claude", info.claude || "not installed / not in PATH", !info.claude),
   ].join("") : "");
 }
 
@@ -624,40 +684,40 @@ $("#hostForm").addEventListener("submit", async (e) => {
   if (hAuth === "password" && $("#hPassword").value) { body.password = $("#hPassword").value; body.store_password = $("#hStorePw").checked; }
   if (hAuth === "manual") body.auth = "manual";
   if (hAuth === "key" && $("#hKey").value.trim()) body.private_key = $("#hKey").value.trim();
-  if (!hEditing && hAuth === "password" && !body.password) return toast("Parola girin (ya da Elle/Özel anahtar seçin)");
-  const btn = $("#hSave"); btn.disabled = true; btn.textContent = "Bağlanıyor…";
+  if (!hEditing && hAuth === "password" && !body.password) return toast("Enter a password (or choose Manual / Private key)");
+  const btn = $("#hSave"); btn.disabled = true; btn.textContent = "Connecting…";
   try {
     if (hEditing) {
       S.hosts = (await api(`/api/hosts/${encodeURIComponent(hEditing)}`, { method: "PATCH", body })).hosts;
-      toast("Kaydedildi"); closeHostEditor();
+      toast("Saved"); closeHostEditor();
       if (hEditing === S.hostId) { const id = S.hostId; S.hostId = ""; switchHost(id); }
     } else {
       const r = await api("/api/hosts", { method: "POST", body });
       S.hosts = r.hosts; closeHostEditor();
       const i = r.host.info || {};
-      toast(`Bağlandı: ${r.host.label}` + (!i.tmux || !i.claude ? " — eksik kurulum var" : ""));
+      toast(`Connected: ${r.host.label}` + (!i.tmux || !i.claude ? " — something is not installed" : ""));
       go(`#/h/${encodeURIComponent(r.host.id)}/sessions`);
     }
     renderHosts();
   } catch (err) { toast(err.message); }
-  btn.disabled = false; btn.textContent = hEditing ? "Kaydet" : "Kaydet ve bağlan";
+  btn.disabled = false; btn.textContent = hEditing ? "Save" : "Save and connect";
 });
 $("#hTest").onclick = async () => {
-  const b = $("#hTest"); b.disabled = true; b.textContent = "Test ediliyor…";
+  const b = $("#hTest"); b.disabled = true; b.textContent = "Testing…";
   try {
     const info = await api(`/api/hosts/${encodeURIComponent(hEditing)}/test`, { method: "POST" });
-    renderHostInfo(null, info); toast(info.ok ? "Bağlantı tamam" : "Bağlandı ama komut hata verdi");
+    renderHostInfo(null, info); toast(info.ok ? "Connection OK" : "Connected, but the command failed");
     S.hosts = (await api("/api/hosts")).hosts; renderHosts();
-  } catch (err) { renderHostInfo({ error: err.message }); toast("Bağlantı başarısız"); }
-  b.disabled = false; b.textContent = "Bağlantıyı test et";
+  } catch (err) { renderHostInfo({ error: err.message }); toast("Connection failed"); }
+  b.disabled = false; b.textContent = "Test connection";
 };
 $("#hShell").onclick = () => { const id = hEditing; closeHostEditor(); go(`#/h/${encodeURIComponent(id)}/shell`); };
 $("#hDelete").onclick = async () => {
   const h = S.hosts.find((x) => x.id === hEditing);
-  if (!confirm(`"${h?.label}" listeden silinsin mi?\nUzak makinedeki tmux oturumlarına dokunulmaz; kayıtlı oturum tanımları da bu konsolda kalır.`)) return;
+  if (!confirm(`Remove "${h?.label}" from the list?\ntmux sessions on the remote host are not touched; saved session definitions also stay in this console.`)) return;
   try {
     S.hosts = (await api(`/api/hosts/${encodeURIComponent(hEditing)}`, { method: "DELETE" })).hosts;
-    closeHostEditor(); toast("Silindi");
+    closeHostEditor(); toast("Removed");
     if (S.hostId === hEditing) go("#/h/local/sessions"); else renderHosts();
   } catch (err) { toast(err.message); }
 };
@@ -673,7 +733,7 @@ function route() {
     parts = parts.slice(2);
   }
   const [page, arg] = parts;
-  const r = ["sessions", "team", "settings", "term", "shell"].includes(page) ? page : "sessions";
+  const r = ["sessions", "hosts", "team", "settings", "term", "shell"].includes(page) ? page : "sessions";
   const wantKind = r === "shell" ? "shell" : r === "term" ? "tmux" : null;
   if (ws && wantKind !== wsKind) closeWs();
   if (r === "term") {
@@ -703,10 +763,10 @@ window.addEventListener("hashchange", route);
 function ago(ts) {
   if (!ts) return "";
   const s = Math.max(0, Date.now() / 1000 - ts);
-  if (s < 60) return "az önce";
-  if (s < 3600) return `${Math.floor(s / 60)} dk`;
-  if (s < 86400) return `${Math.floor(s / 3600)} sa`;
-  return `${Math.floor(s / 86400)} g`;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
 }
 // replace innerHTML only when it really changed: periodic refreshes must not eat taps/clicks
 function setHTML(el, html) { if (el._html !== html) { el.innerHTML = html; el._html = html; } }
@@ -715,7 +775,7 @@ const initials = (s) => (s || "?").replace(/\(.*?\)/g, "").trim().split(/[\s._-]
 
 function renderAll() {
   if (document.hidden) { renderAll.pending = true; return; }
-  renderSidebar(); renderHead(); renderCards(); renderTargets();
+  renderSidebar(); renderHead(); renderCards(); renderTargets(); renderHostCards();
 }
 
 function renderSidebar() {
@@ -724,7 +784,8 @@ function renderSidebar() {
   $("#shellItem li").classList.toggle("active", S.route === "shell");
   $("#shellItem .nm").textContent = S.hostId === "local" ? "Shell" : `SSH · ${S.host}`;
   $("#whoUser").textContent = S.user || "";
-  $("#whoHost").textContent = `${S.hosts.length || 1} host · ${running.length} çalışıyor burada`;
+  const nh = S.hosts.length || 1;
+  $("#whoHost").textContent = `${nh} host${nh === 1 ? "" : "s"} · ${running.length} running here`;
   renderHosts();
   $("#avatar").textContent = (S.user || "?")[0].toUpperCase();
 }
@@ -734,7 +795,7 @@ function renderHead() {
   if (S.route === "shell") {
     const remote = S.hostId !== "local";
     $("#tDisplay").textContent = remote ? `SSH · ${S.host}` : "Shell"; $("#tName").textContent = `${S.login}@${S.host}`;
-    $("#tStatus").className = "status s-shell"; $("#tStatus").innerHTML = `<span class="dot"></span>${remote ? "ssh login shell (tmux dışı)" : "login shell (tmux dışı)"}`;
+    $("#tStatus").className = "status s-shell"; $("#tStatus").innerHTML = `<span class="dot"></span>${remote ? "ssh login shell (outside tmux)" : "login shell (outside tmux)"}`;
     $("#tProvider").textContent = ""; $("#tPath").textContent = "";
     document.title = `${remote ? "SSH" : "Shell"} · ${S.host} · devbox`;
     return;
@@ -756,7 +817,7 @@ function renderCards() {
   renderHostBanner();
   const q = $("#sessFilter").value.trim().toLowerCase();
   const nHidden = S.windows.filter((w) => w.hidden).length;
-  $("#hiddenSeg").textContent = nHidden ? `Gizli (${nHidden})` : "Gizli";
+  $("#hiddenSeg").textContent = nHidden ? `Hidden (${nHidden})` : "Hidden";
   const list = S.windows.filter((w) =>
     (S.filter === "hidden" ? w.hidden : !w.hidden && (S.filter === "all" || (S.filter === "running") === !!w.running)) &&
     (!q || [w.display, w.name, w.cwd, w.provider, w.command].join(" ").toLowerCase().includes(q)));
@@ -765,34 +826,34 @@ function renderCards() {
   setHTML($("#cards"), list.length ? list.map((w) => `
     <div class="card s-${w.status} ${w.running ? "" : "off"} ${w.hidden ? "hidden-card" : ""}" data-name="${esc(w.name)}">
       <div class="card-head">
-        <span class="tile">${esc(initials(w.display))}<span class="dot"></span></span>
-        <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code> · ${esc(STATUS_LABEL[w.status] || w.status)}${w.saved || w.external ? "" : " · kaydedilmemiş"}</span></div>
-        ${w.external ? "" : `<button class="icon-btn" data-act="edit" title="Düzenle">✎</button>`}
-        <button class="icon-btn" data-act="close" title="Kapat / gizle">✕</button>
+        <span class="tile">${esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
+        <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.saved || w.external ? "" : " · unsaved"}</span></div>
+        ${w.external ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
+        <button class="icon-btn" data-act="close" title="Close / hide">✕</button>
       </div>
       <div class="card-path" title="${esc(w.cwd)}">▭ ${esc(shortPath(w.cwd) || "—")}</div>
       ${w.running ? `<pre>${esc((w.preview || []).join("\n"))}</pre>` : ""}
       <div class="card-foot">
-        ${w.external ? `<span class="pill ext" title="Konsol dışında açılmış tmux oturumu: ${esc(w.tmux_session)}">harici · ${esc(w.tmux_session)}</span>` : ""}
+        ${w.external ? `<span class="pill ext" title="tmux session opened outside the console: ${esc(w.tmux_session)}">external · ${esc(w.tmux_session)}</span>` : ""}
         ${w.hidden ? `<button class="btn" data-act="unhide">Geri getir</button>` : ""}
         ${w.provider ? `<span class="pill">✦ ${esc(w.provider)}</span>` : ""}
         <code class="cmd">${esc(w.command || w.cmd || "")}</code>
-        ${w.autostart ? '<span class="pill" title="Otomatik başlar">auto</span>' : ""}
+        ${w.autostart ? '<span class="pill" title="Starts automatically">auto</span>' : ""}
         <span class="grow"></span>
         <span class="muted">${ago(w.last_change)}</span>
         ${w.running
-          ? (w.status === "dead" ? `<button class="btn" data-act="restart">Yeniden başlat</button>` : "") + `<button class="btn primary" data-act="open">Bağlan</button>`
-          : `<button class="btn" data-act="fresh" title="Yeni konuşma">Başlat</button><button class="btn primary" data-act="resume" title="claude --continue">Devam</button>`}
+          ? (w.status === "dead" ? `<button class="btn" data-act="restart">Restart</button>` : "") + `<button class="btn primary" data-act="open">Connect</button>`
+          : `<button class="btn" data-act="fresh" title="New conversation">Start</button><button class="btn primary" data-act="resume" title="claude --continue">Resume</button>`}
       </div>
     </div>`).join("")
-    : `<div class="empty">${S.windows.length ? "Eşleşen oturum yok." : "Henüz oturum yok.<br><br><button class='btn primary' data-act='new'>＋ İlk oturumu oluştur</button><br><br><span class='small'>Her oturum: seçtiğiniz klasörde tmux içinde çalışan bir claude.</span>"}</div>`);
+    : `<div class="empty">${S.windows.length ? "No matching session." : "No sessions yet.<br><br><button class='btn primary' data-act='new'>＋ Create the first session</button><br><br><span class='small'>Each session is a claude running inside tmux in a folder you choose.</span>"}</div>`);
 }
 
 function renderTargets() {
   const tgt = (w) => (S.hostId === "local" ? w.name : `${w.name}@${S.hostId}`);
   const opts = S.windows.map((w) => `<option value="${esc(tgt(w))}">${esc(w.display)} (${esc(tgt(w))})</option>`).join("");
   const sets = [[$("#msgTo"), `<option value="all">Herkes</option>${opts}`],
-                [$("#teamFilter"), `<option value="">Tümü</option><option value="user">${esc(S.user || "Kullanıcı")}</option>${opts}`]];
+                [$("#teamFilter"), `<option value="">All</option><option value="user">${esc(S.user || "User")}</option>${opts}`]];
   for (const [sel, html] of sets) {
     if (sel.dataset.html === html) continue;
     const v = sel.value; sel.innerHTML = html; sel.dataset.html = html;
@@ -814,7 +875,7 @@ $("#cards").addEventListener("click", async (e) => {
   if (act === "resume") return startSession(name, true);
   if (act === "fresh") return startSession(name, false);
   if (act === "restart") {
-    try { await api(`/api/windows/${encodeURIComponent(w.id)}/action`, { method: "POST", body: { action: "respawn", command: w.command || "claude" } }); toast("Yeniden başlatıldı"); }
+    try { await api(`/api/windows/${encodeURIComponent(w.id)}/action`, { method: "POST", body: { action: "respawn", command: w.command || "claude" } }); toast("Restarted"); }
     catch (err) { toast(err.message); }
     return;
   }
@@ -826,13 +887,13 @@ function setFilter(f) {
   S.filter = f; $$("#sessView button").forEach((x) => x.classList.toggle("on", x.dataset.f === f)); renderCards();
 }
 $("#sessView").addEventListener("click", (e) => { const b = e.target.closest("[data-f]"); if (b) setFilter(b.dataset.f); });
-$("#refreshBtn").onclick = async () => { applySnapshot(await api("/api/windows?refresh=1")); toast("Güncellendi"); };
+$("#refreshBtn").onclick = async () => { applySnapshot(await api("/api/windows?refresh=1")); toast("Refreshed"); };
 $("#startAllBtn").onclick = async () => {
   const stopped = S.windows.filter((w) => !w.running && !w.hidden);
   for (const w of stopped) {
     try { applySnapshot(await sessApi(w.name, "/start", { method: "POST", body: { resume: true } })); } catch (e) { toast(`${w.name}: ${e.message}`); }
   }
-  toast(`${stopped.length} oturum başlatıldı`);
+  toast(`${stopped.length} sessions started`);
 };
 $("#newSessionBtn").onclick = () => openEditor();
 $("#newSessionBtn2").onclick = () => openEditor();
@@ -841,10 +902,10 @@ $("#newSessionBtn2").onclick = () => openEditor();
 function fmtText(t) { return esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>"); }
 function fmtTime(ts) {
   const d = new Date(ts * 1000), today = new Date().toDateString() === d.toDateString();
-  return today ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" });
+  return today ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 }
 function nameOf(n) {
-  if (n === "user") return S.user || "Kullanıcı";
+  if (n === "user") return S.user || "User";
   const [name, host = "local"] = n.split("@");
   const w = host === S.hostId ? S.windows.find((x) => x.name === name) : null;
   const h = host !== "local" ? S.hosts.find((x) => x.id === host) : null;
@@ -859,9 +920,9 @@ function renderBoard(scroll) {
   b.innerHTML = list.length ? list.map((m) => `
     <div class="msg ${m.from === "user" ? "mine" : ""}">
       <div class="msg-head"><b>${esc(nameOf(m.from))}</b><span class="to">→ ${esc(m.to === "all" ? "herkes" : nameOf(m.to))}</span>
-        <span>${fmtTime(m.ts)}</span>${m.delivered?.length ? `<span class="dlv" title="send-keys ile iletildi">✓ ${esc(m.delivered.join(", "))}</span>` : ""}</div>
+        <span>${fmtTime(m.ts)}</span>${m.delivered?.length ? `<span class="dlv" title="delivered with send-keys">✓ ${esc(m.delivered.join(", "))}</span>` : ""}</div>
       <div class="msg-body">${fmtText(m.text)}</div>
-    </div>`).join("") : `<div class="empty">Henüz mesaj yok.<br><span class="small">Oturumlar <code>devbox-msg post "…"</code> ile yazar, <code>devbox-msg read</code> ile okur.</span></div>`;
+    </div>`).join("") : `<div class="empty">No messages yet.<br><span class="small">Sessions post with <code>devbox-msg post "…"</code> and read with <code>devbox-msg read</code>.</span></div>`;
   if (scroll || atBottom) b.scrollTop = b.scrollHeight;
 }
 function renderUnread() { $("#unread").textContent = S.unread; $("#unread").classList.toggle("hidden", !S.unread); }
@@ -890,8 +951,8 @@ $("#msgText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.c
 async function loadSettings() {
   const s = S.settings = await api("/api/settings");
   $("#envRows").innerHTML = s.env.map((e) => `<tr><td><code>${esc(e.name)}</code></td><td class="muted"><code>${esc(e.masked)}</code></td>
-      <td><button class="btn" data-edit="${esc(e.name)}">Değiştir</button> <button class="btn danger" data-del="${esc(e.name)}">Sil</button></td></tr>`).join("")
-    || `<tr><td class="muted">Tanımlı değişken yok.</td></tr>`;
+      <td><button class="btn" data-edit="${esc(e.name)}">Change</button> <button class="btn danger" data-del="${esc(e.name)}">Delete</button></td></tr>`).join("")
+    || `<tr><td class="muted">No variables defined.</td></tr>`;
   $("#newCmdDefault").value = s.new_window_command || "";
   $("#projectsRoot").value = s.projects_root || "";
   $("#pubUrl").textContent = s.public_url;
@@ -900,25 +961,25 @@ async function loadSettings() {
   $("#rootHost").textContent = s.host;
   $("#pubKey").textContent = s.public_key || "";
   const st = s.secrets || {};
-  $("#storeInfo").textContent = st.kind === "vault" ? `HashiCorp Vault · ${st.location} · ${st.mount}/ (${st.mode === "managed" ? "konsol yönetiyor" : "harici"})` : `dosya (0600) · ${st.location}`;
+  $("#storeInfo").textContent = st.kind === "vault" ? `HashiCorp Vault · ${st.location} · ${st.mount}/ (${st.mode === "managed" ? "managed by the console" : "external"})` : `file (0600) · ${st.location}`;
   $("#msgInstall").textContent = `mkdir -p ~/.local/bin && curl -fsS ${s.public_url}/devbox-msg -o ~/.local/bin/devbox-msg && chmod +x ~/.local/bin/devbox-msg`;
 }
 $("#saveDefaults").onclick = async () => {
   try {
     await api("/api/settings", { method: "PUT", body: { new_window_command: $("#newCmdDefault").value.trim(), projects_root: $("#projectsRoot").value.trim() } });
-    S.settings = null; S.dirs = null; toast("Kaydedildi");
+    S.settings = null; S.dirs = null; toast("Saved");
   } catch (err) { toast(err.message); }
 };
 $("#envForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     await api("/api/env", { method: "PUT", body: { name: $("#envName").value.trim(), value: $("#envValue").value } });
-    $("#envName").value = ""; $("#envValue").value = ""; toast("Kaydedildi — yeni/yeniden başlatılan oturumlarda geçerli"); loadSettings();
+    $("#envName").value = ""; $("#envValue").value = ""; toast("Saved — applies to new/restarted sessions"); loadSettings();
   } catch (err) { toast(err.message); }
 });
 $("#envRows").addEventListener("click", async (e) => {
   if (e.target.dataset.edit) { $("#envName").value = e.target.dataset.edit; $("#envValue").focus(); }
-  if (e.target.dataset.del && confirm(`${e.target.dataset.del} silinsin mi?`)) {
+  if (e.target.dataset.del && confirm(`Delete ${e.target.dataset.del}?`)) {
     try { await api("/api/env", { method: "PUT", body: { name: e.target.dataset.del, delete: true } }); loadSettings(); } catch (err) { toast(err.message); }
   }
 });
@@ -932,14 +993,15 @@ function openPalette() { $("#paletteInput").value = ""; palSel = 0; renderPalett
 function renderPalette() {
   const q = $("#paletteInput").value.toLowerCase();
   const all = [
-    ...S.windows.map((w) => ({ label: w.display + (w.hidden ? " (gizli)" : ""), k: `${w.name} · ${STATUS_LABEL[w.status] || ""} · ${shortPath(w.cwd)}`, dot: w.status, run: () => openSession(w.name) })),
+    ...S.windows.map((w) => ({ label: w.display + (w.hidden ? " (hidden)" : ""), k: `${w.name} · ${STATUS_LABEL[w.status] || ""} · ${shortPath(w.cwd)}`, dot: w.status, run: () => openSession(w.name) })),
     { label: S.hostId === "local" ? "Shell" : `SSH · ${S.host}`, k: `${S.login}@${S.host}`, run: () => go(hp("shell")) },
     ...S.hosts.filter((h) => h.id !== S.hostId).map((h) => ({ label: `Host: ${h.label}`, k: `${h.username}@${h.hostname}`, run: () => go(`#/h/${encodeURIComponent(h.id)}/sessions`) })),
-    { label: "Uzak makine ekle…", k: "komut", run: () => openHostEditor() },
-    { label: "Yeni oturum…", k: "komut", run: () => openEditor() },
-    { label: "Sessions", k: "sayfa", run: () => go(hp("sessions")) },
-    { label: "Team", k: "sayfa", run: () => go("#/team") },
-    { label: "Settings", k: "sayfa", run: () => go("#/settings") },
+    { label: "Add remote host…", k: "command", run: () => openHostEditor() },
+    { label: "New session…", k: "command", run: () => openEditor() },
+    { label: "Sessions", k: "page", run: () => go(hp("sessions")) },
+    { label: "Hosts", k: "page", run: () => go("#/hosts") },
+    { label: "Team", k: "page", run: () => go("#/team") },
+    { label: "Settings", k: "page", run: () => go("#/settings") },
   ];
   palItems = all.filter((i) => (i.label + " " + i.k).toLowerCase().includes(q));
   palSel = Math.min(palSel, Math.max(0, palItems.length - 1));
@@ -980,7 +1042,7 @@ function startEvents() {
   if (es) es.close();
   es = new EventSource(withHost("/api/events"));
   es.addEventListener("windows", (e) => applySnapshot(JSON.parse(e.data)));
-  es.addEventListener("hosts", (e) => { S.hosts = JSON.parse(e.data); renderHosts(); renderHostBanner(); });
+  es.addEventListener("hosts", (e) => { S.hosts = JSON.parse(e.data); renderHosts(); renderHostBanner(); renderHostCards(); });
   es.addEventListener("message", (e) => addMessage(JSON.parse(e.data)));
 }
 document.addEventListener("visibilitychange", () => {

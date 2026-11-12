@@ -242,9 +242,9 @@ class Box:
             out, err = await asyncio.wait_for(proc.communicate(), timeout)
         except asyncio.TimeoutError:
             proc.kill()
-            raise RuntimeError(f"{self.label}: zaman aşımı")
+            raise RuntimeError(f"{self.label}: timed out")
         if self.via_ssh and proc.returncode == 255:  # ssh itself failed
-            raise RuntimeError(f"{self.label}: SSH bağlantısı kurulamadı — {err.decode(errors='replace').strip()[-300:]}")
+            raise RuntimeError(f"{self.label}: SSH connection failed — {err.decode(errors='replace').strip()[-300:]}")
         if check and proc.returncode:
             raise RuntimeError(err.decode(errors="replace").strip() or f"{argv[0]} failed")
         return proc.returncode or 0, out.decode(errors="replace")
@@ -460,12 +460,12 @@ class Box:
     async def start_saved(self, name: str, resume: bool) -> str:
         rec = self.load_sessions()["sessions"].get(name)
         if rec is None:
-            raise web.HTTPNotFound(text="kayıtlı oturum yok")
+            raise web.HTTPNotFound(text="no saved session")
         if any(w["name"] == name for w in self.windows):
-            raise web.HTTPConflict(text="oturum zaten çalışıyor")
+            raise web.HTTPConflict(text="session is already running")
         cwd = await self.resolve_dir(rec.get("cwd") or "~")
         if not cwd:
-            raise web.HTTPBadRequest(text=f"klasör bulunamadı: {rec.get('cwd')}")
+            raise web.HTTPBadRequest(text=f"folder not found: {rec.get('cwd')}")
         cmd = rec.get("command") or ""
         if resume and cmd.split()[:1] == ["claude"] and "--continue" not in cmd and "-c" not in cmd.split():
             cmd += " --continue"  # pick the last conversation in this folder back up
@@ -481,7 +481,7 @@ class Box:
                 try:
                     await self.start_saved(name, resume=True)
                 except Exception as e:  # noqa: BLE001
-                    self.error = f"{name} otomatik başlatılamadı: {getattr(e, 'text', e)}"
+                    self.error = f"{name} could not be autostarted: {getattr(e, 'text', e)}"
 
     async def poll_loop(self) -> None:
         started = False
@@ -587,7 +587,7 @@ class User:
     # ---- local processes as this user
     def spawn_kw(self) -> dict:
         if AUTH != "pam":
-            raise RuntimeError("Docker modunda yerel komut çalıştırılmaz")
+            raise RuntimeError("no local commands in Docker mode")
         env = {
             "HOME": self.home, "USER": self.name, "LOGNAME": self.name, "SHELL": self.shell,
             "PATH": STD_PATH if IS_ROOT else os.environ.get("PATH", STD_PATH),
@@ -700,7 +700,7 @@ class User:
             if host_id != "local":
                 host = next((h for h in self.load_hosts() if h["id"] == host_id), None)
                 if host is None:
-                    raise web.HTTPNotFound(text="host yok")
+                    raise web.HTTPNotFound(text="no such host")
             self.boxes[host_id] = Box(self, host)
         b = self.boxes[host_id]
         if b.poller is None or b.poller.done():
@@ -772,23 +772,23 @@ def user_by_token(token: str) -> str | None:
 def may_login(name: str) -> str | None:
     """Return an error message if this account may not use the console."""
     if not USER_RE.fullmatch(name):
-        return "geçersiz kullanıcı adı"
+        return "invalid user name"
     if AUTH == "ssh":  # users live on the host; its sshd decides
         if name == "root" and not ALLOW_ROOT:
-            return "root ile giriş kapalı (DEVBOX_ALLOW_ROOT=1)"
+            return "root login is disabled (DEVBOX_ALLOW_ROOT=1)"
         if ALLOWED and name not in ALLOWED:
-            return "bu kullanıcıya izin verilmiyor (DEVBOX_USERS)"
+            return "this user is not allowed (DEVBOX_USERS)"
         return None
     try:
         pw = pwd.getpwnam(name)
     except KeyError:
         return None  # let PAM fail it with the same timing as a wrong password
     if pw.pw_uid == 0 and not ALLOW_ROOT:
-        return "root ile giriş kapalı (DEVBOX_ALLOW_ROOT=1)"
+        return "root login is disabled (DEVBOX_ALLOW_ROOT=1)"
     if ALLOWED and name not in ALLOWED:
-        return "bu kullanıcıya izin verilmiyor (DEVBOX_USERS)"
+        return "this user is not allowed (DEVBOX_USERS)"
     if not IS_ROOT and name != RUN_USER:
-        return f"servis root olarak çalışmıyor; yalnızca '{RUN_USER}' girebilir"
+        return f"the service is not running as root; only '{RUN_USER}' can log in"
     return None
 
 
@@ -856,7 +856,7 @@ def wid_of(req) -> str:
 def name_of(req) -> str:
     name = req.match_info["name"]
     if not (WIN_NAME_RE.fullmatch(name) or EXT_NAME_RE.fullmatch(name)):
-        raise web.HTTPBadRequest(text="geçersiz oturum adı")
+        raise web.HTTPBadRequest(text="invalid session name")
     return name
 
 
@@ -889,7 +889,7 @@ async def api_login(req):
         del _fail[k]
     recent = [t for t in _fail.get(ip, []) if time.time() - t < 300]
     if len(recent) >= 10:
-        raise web.HTTPTooManyRequests(text="çok fazla hatalı deneme, 5 dk bekleyin")
+        raise web.HTTPTooManyRequests(text="too many failed attempts, wait 5 minutes")
     err = may_login(name)
     if err:
         raise web.HTTPForbidden(text=err)
@@ -898,13 +898,13 @@ async def api_login(req):
         rc, msg = await _ssh_password(local_host(name), password, "true", known_hosts=DATA / "known_hosts")
         ok = rc == 0
         if rc == 255 and "Permission denied" not in msg:
-            raise web.HTTPBadGateway(text=f"host'a SSH yapılamadı ({LOCAL_SSH}): {msg[-200:]}")
+            raise web.HTTPBadGateway(text=f"cannot SSH to the host ({LOCAL_SSH}): {msg[-200:]}")
     else:
         ok, _msg = await asyncio.to_thread(pam.authenticate, name, password, PAM_SERVICE)
     if not ok:
         _fail[ip] = recent + [time.time()]
         await asyncio.sleep(1)
-        raise web.HTTPUnauthorized(text="giriş başarısız, lütfen tekrar deneyin")
+        raise web.HTTPUnauthorized(text="login failed, please try again")
     _fail.pop(ip, None)
     u = await get_user(name)
     if AUTH == "ssh":
@@ -940,11 +940,11 @@ def _host_fields(body: dict) -> dict:
     except ValueError:
         port = 0
     if not HOSTNAME_RE.fullmatch(hostname) or hostname.startswith("-"):
-        raise web.HTTPBadRequest(text="geçersiz host adı / IP")
+        raise web.HTTPBadRequest(text="invalid host name / IP")
     if not USER_RE.fullmatch(username):
-        raise web.HTTPBadRequest(text="geçersiz kullanıcı adı")
+        raise web.HTTPBadRequest(text="invalid user name")
     if not 0 < port < 65536:
-        raise web.HTTPBadRequest(text="geçersiz port")
+        raise web.HTTPBadRequest(text="invalid port")
     return {"label": str(body.get("label", "")).strip()[:40] or hostname, "hostname": hostname,
             "port": port, "username": username}
 
@@ -964,7 +964,7 @@ async def _ssh_password(h: dict, password: str, remote_cmd: str, stdin: bytes = 
         _, err = await asyncio.wait_for(proc.communicate(stdin), 30)
     except asyncio.TimeoutError:
         proc.kill()
-        return 255, "bağlantı zaman aşımı"
+        return 255, "connection timed out"
     return proc.returncode or 0, err.decode(errors="replace").strip()
 
 
@@ -976,8 +976,8 @@ async def _install_key(u: User, h: dict, password: str) -> None:
     rc, msg = await _ssh_password(h, password, remote, (pub + "\n").encode(), u.dir / "ssh" / "known_hosts")
     if rc:
         if "Permission denied" in msg:
-            msg = "parola reddedildi (ya da sunucuda parola ile giriş kapalı)"
-        raise web.HTTPBadGateway(text=f"anahtar kurulamadı: {msg[-300:]}")
+            msg = "password rejected (or password login is disabled on the server)"
+        raise web.HTTPBadGateway(text=f"could not install the key: {msg[-300:]}")
 
 
 async def _apply_host_auth(u: User, hid: str, h: dict, body: dict) -> None:
@@ -990,9 +990,9 @@ async def _apply_host_auth(u: User, hid: str, h: dict, body: dict) -> None:
     pw = str(body.get("password") or "")
     if pk:
         if "PRIVATE KEY" not in pk:
-            raise web.HTTPBadRequest(text="özel anahtar OpenSSH/PEM biçiminde olmalı")
+            raise web.HTTPBadRequest(text="the private key must be in OpenSSH/PEM format")
         if "ENCRYPTED" in pk:
-            raise web.HTTPBadRequest(text="parolalı (şifreli) anahtar desteklenmiyor; parola ile anahtar kurulumunu kullanın")
+            raise web.HTTPBadRequest(text="passphrase-protected keys are not supported; use password-based key install")
         await u.set_host_secret(hid, {"private_key": pk + "\n"})
     elif pw and body.get("store_password"):
         await u.set_host_secret(hid, {"password": pw})
@@ -1027,7 +1027,7 @@ async def api_create_host(req):
     hosts = u.load_hosts()
     dup = next((x for x in hosts if (x["hostname"], x["port"], x["username"]) == (h["hostname"], h["port"], h["username"])), None)
     if dup:
-        raise web.HTTPConflict(text=f"bu makine zaten ekli: {dup['label']}")
+        raise web.HTTPConflict(text=f"this host is already added: {dup['label']}")
     base = re.sub(r"[^a-z0-9-]+", "-", h["label"].lower()).strip("-")[:24] or "host"
     hid, n = base, 2
     while hid == "local" or any(x["id"] == hid for x in hosts):
@@ -1040,7 +1040,7 @@ async def api_create_host(req):
         info = await _probe(box)
     except RuntimeError as e:
         await u.set_host_secret(hid, None)
-        raise web.HTTPBadGateway(text=f"{e} — parola girerek anahtarı kurun, özel anahtar yapıştırın ya da public key'i elle ekleyin")
+        raise web.HTTPBadGateway(text=f"{e} — enter a password to install the key, paste a private key, or add the public key manually")
     h["info"] = info
     hosts.append(h)
     u.save_hosts(hosts)
@@ -1054,7 +1054,7 @@ async def api_update_host(req):
     hosts = u.load_hosts()
     h = next((x for x in hosts if x["id"] == hid), None)
     if not h:
-        raise web.HTTPNotFound(text="host yok")
+        raise web.HTTPNotFound(text="no such host")
     h.update(_host_fields({**h, **body}))
     await _apply_host_auth(u, hid, h, body)
     u.save_hosts(hosts)
@@ -1087,7 +1087,7 @@ async def api_delete_host(req):
     """Forget a host (its tmux sessions keep running there; nothing on the remote is touched)."""
     u, hid = U(req), req.match_info["hid"]
     if hid == "local":
-        raise web.HTTPBadRequest(text="bu makine silinemez")
+        raise web.HTTPBadRequest(text="this host cannot be deleted")
     u.save_hosts([h for h in u.load_hosts() if h["id"] != hid])
     await u.set_host_secret(hid, None)
     u.drop_box(hid)
@@ -1116,13 +1116,13 @@ async def api_create_session(req):
     b, body = B(req), await req.json()
     name = str(body.get("name", "")).strip()
     if not WIN_NAME_RE.fullmatch(name):
-        raise web.HTTPBadRequest(text="ad: harf, rakam, . _ - (en çok 40)")
+        raise web.HTTPBadRequest(text="name: letters, digits, . _ - (max 40)")
     s = b.load_sessions()
     if name in s["sessions"] or any(w["name"] == name for w in b.windows):
-        raise web.HTTPConflict(text="bu adda bir oturum zaten var")
+        raise web.HTTPConflict(text="a session with this name already exists")
     cwd = await b.resolve_dir(str(body.get("cwd") or ""))
     if not cwd:
-        raise web.HTTPBadRequest(text="başlangıç klasörü bulunamadı (claude bu klasörde açılır)")
+        raise web.HTTPBadRequest(text="start folder not found (claude opens in this folder)")
     cmd = body.get("command")
     s["sessions"][name] = {
         "display": str(body.get("display", "")).strip()[:60], "provider": str(body.get("provider", "")).strip()[:30],
@@ -1140,12 +1140,12 @@ async def api_update_session(req):
     """Edit a session; also adopts a live unsaved window (saves it). Renaming renames the tmux window."""
     b, name, body = B(req), name_of(req), await req.json()
     if "~" in name:
-        raise web.HTTPBadRequest(text="harici tmux penceresi düzenlenemez (gizleyebilir ya da kapatabilirsiniz)")
+        raise web.HTTPBadRequest(text="external tmux windows cannot be edited (you can hide or close them)")
     s = b.load_sessions()
     live = next((w for w in b.windows if w["name"] == name), None)
     rec = s["sessions"].get(name)
     if rec is None and live is None:
-        raise web.HTTPNotFound(text="oturum yok")
+        raise web.HTTPNotFound(text="no such session")
     rec = dict(rec or {"cwd": live["start_path"], "created": time.time(), "command": ""})
     for k in ("display", "provider", "command"):
         if k in body:
@@ -1155,14 +1155,14 @@ async def api_update_session(req):
     if body.get("cwd"):
         cwd = await b.resolve_dir(str(body["cwd"]))
         if not cwd:
-            raise web.HTTPBadRequest(text="başlangıç klasörü bulunamadı")
+            raise web.HTTPBadRequest(text="start folder not found")
         rec["cwd"] = cwd
     new = str(body.get("new_name") or name).strip()
     if new != name:
         if not WIN_NAME_RE.fullmatch(new):
-            raise web.HTTPBadRequest(text="ad: harf, rakam, . _ - (en çok 40)")
+            raise web.HTTPBadRequest(text="name: letters, digits, . _ - (max 40)")
         if new in s["sessions"] or any(w["name"] == new for w in b.windows):
-            raise web.HTTPConflict(text="bu adda bir oturum zaten var")
+            raise web.HTTPConflict(text="a session with this name already exists")
         if live:
             await b.tmux("rename-window", "-t", live["id"], new, check=True)
         s["sessions"].pop(name, None)
@@ -1201,7 +1201,7 @@ async def api_stop_session(req):
     b, name = B(req), name_of(req)
     live = next((w for w in b.windows if w["name"] == name), None)
     if not live:
-        raise web.HTTPConflict(text="oturum zaten durmuş")
+        raise web.HTTPConflict(text="session is already stopped")
     s = b.load_sessions()
     if name not in s["sessions"] and not live["external"]:  # stopping an unsaved window would lose it: save it first
         s["sessions"][name] = {"display": "", "provider": "", "cwd": live["start_path"], "command": "",
@@ -1293,13 +1293,13 @@ async def api_put_env(req):
     u, body = U(req), await req.json()
     name = str(body.get("name", "")).strip()
     if not ENV_NAME_RE.fullmatch(name) or name in ("DEVBOX_URL", "DEVBOX_TOKEN"):
-        raise web.HTTPBadRequest(text="geçersiz değişken adı")
+        raise web.HTTPBadRequest(text="invalid variable name")
     if body.get("delete"):
         await u.set_env(name, None)
     else:
         value = str(body.get("value", ""))
         if not value:
-            raise web.HTTPBadRequest(text="boş değer")
+            raise web.HTTPBadRequest(text="empty value")
         await u.set_env(name, value)
     for b in list(u.boxes.values()):  # push to every reachable host
         try:
@@ -1337,7 +1337,7 @@ async def api_post_message(req):
     u, body = U(req), await req.json()
     text = str(body.get("text", "")).strip()
     if not text:
-        raise web.HTTPBadRequest(text="boş mesaj")
+        raise web.HTTPBadRequest(text="empty message")
     async with u.msg_lock:
         msgs = u.load_messages()
         m = {
@@ -1417,7 +1417,7 @@ async def ws_term(req):
             tsess = next((w["tmux_session"] for w in b.windows if w["id"] == wid), SESSION)
             rc, _ = await b.run(["tmux", "has-session", "-t", f"={tsess}"])
             if rc != 0:
-                await ws.send_bytes("\r\n  Bu tmux oturumu artık yok.\r\n".encode())
+                await ws.send_bytes("\r\n  This tmux session no longer exists.\r\n".encode())
                 await ws.close()
                 return ws
             # A grouped session shares the windows of `main` but has its own current window, so every

@@ -339,9 +339,6 @@ dialog.wide[open] { display: flex; }
 .tree li.sess.off .nm { color: var(--fg-muted); }
 .tree li.empty-sess { padding-left: 30px; color: var(--fg-subtle); font-size: 12px; cursor: default; }
 .tree li.empty-sess:hover { background: none; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 8px; }
-.legend span { display: inline-flex; align-items: center; gap: 5px; }
-.legend .dot { display: inline-block; width: 7px; height: 7px; animation: none; box-shadow: none; }
 .tree .busy { color: var(--success); }
 /* touch: no hover, bigger targets */
 @media (pointer: coarse) {
@@ -353,7 +350,6 @@ dialog.wide[open] { display: flex; }
 .card-foot .btn { margin-left: 0; }
 .card-foot .muted + .btn, .card-foot .muted + .btn + .btn { flex: none; }
 
-.legend .dot::after { display: none; }
 .tile .dot::after { inset: -2px; }
 /* close dialog */
 .close-opts { display: flex; flex-direction: column; gap: 8px; }
@@ -370,3 +366,9 @@ dialog.wide[open] { display: flex; }
   .card pre { height: calc(4 * 1.45em + 16px); }
   .filter { font-size: 15px; }
 }
+
+/* hosts page */
+.host-card { cursor: default; }
+.host-card .tile { font-size: 16px; }
+.danger-text { color: var(--danger); }
+.card-foot .grow { flex: 1; }

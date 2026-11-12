@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="tr"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1117">
-<title>devbox — giriş</title>
+<title>devbox — login</title>
 <link rel="stylesheet" href="/static/app.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%23d29922%27/%3E%3Ctext x=%2716%27 y=%2722%27 font-family=%27monospace%27 font-size=%2714%27 font-weight=%27700%27 text-anchor=%27middle%27 fill=%27%230d1117%27%3E%3E_%3C/text%3E%3C/svg%3E">
 <style>
@@ -21,17 +21,17 @@ form { padding: 16px; display: flex; flex-direction: column; gap: 4px; }
 </style></head>
 <body>
 <div class="modal" role="dialog" aria-labelledby="t">
-  <div class="modal-head"><span class="logo">&gt;_</span><span id="t">devbox console — giriş</span><span class="host" id="host"></span></div>
+  <div class="modal-head"><span class="logo">&gt;_</span><span id="t">devbox console — login</span><span class="host" id="host"></span></div>
   <form id="f" autocomplete="on">
-    <label class="field">Kullanıcı adı
+    <label class="field">User name
       <input id="u" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
-    <label class="field">Parola
+    <label class="field">Password
       <input id="p" name="password" type="password" autocomplete="current-password" required></label>
-    <label class="field">Bölge (realm)
-      <select id="realm"><option value="pam">Linux PAM standart kimlik doğrulama</option></select></label>
-    <p class="note" id="note">Makinenin kendi Linux kullanıcısıyla girin. Shell ve oturumlar bu kullanıcı olarak çalışır.</p>
+    <label class="field">Realm
+      <select id="realm"><option value="pam">Linux PAM standard authentication</option></select></label>
+    <p class="note" id="note">Log in with the machine's own Linux user. Shells and sessions run as this user.</p>
     <div class="err" id="err"></div>
-    <button class="btn primary" id="go">Giriş</button>
+    <button class="btn primary" id="go">Log in</button>
   </form>
 </div>
 <script>
@@ -41,12 +41,12 @@ form { padding: 16px; display: flex; flex-direction: column; gap: 4px; }
     if (w.user) { location.replace("/"); return; }
     document.getElementById("host").textContent = w.host || "";
     if (w.auth === "ssh") {
-      document.querySelector("#realm option").textContent = "Linux PAM (host üzerinden SSH ile)";
-      document.getElementById("note").textContent = `${w.host} makinesinin Linux kullanıcısıyla girin. Kimlik bilgisi host'un sshd/PAM'i ile doğrulanır; parola saklanmaz.`;
+      document.querySelector("#realm option").textContent = "Linux PAM (via SSH to the host)";
+      document.getElementById("note").textContent = `Log in with a Linux user of ${w.host}. Credentials are checked by the host's sshd/PAM; the password is not stored.`;
     }
     if (w.single_user) {
       document.getElementById("u").value = w.single_user;
-      document.getElementById("note").textContent += ` (Servis root değil: yalnızca "${w.single_user}" girebilir.)`;
+      document.getElementById("note").textContent += ` (The service is not running as root: only "${w.single_user}" can log in.)`;
       document.getElementById("p").focus();
     } else document.getElementById("u").focus();
   } catch {}
@@ -54,15 +54,15 @@ form { padding: 16px; display: flex; flex-direction: column; gap: 4px; }
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
   const btn = document.getElementById("go"), err = document.getElementById("err");
-  btn.disabled = true; btn.textContent = "Doğrulanıyor…"; err.textContent = "";
+  btn.disabled = true; btn.textContent = "Verifying…"; err.textContent = "";
   try {
     const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: document.getElementById("u").value.trim(), password: document.getElementById("p").value }) });
     if (r.ok) { location.replace("/" + location.hash); return; }
     err.textContent = await r.text();
     document.getElementById("p").select();
-  } catch { err.textContent = "Sunucuya ulaşılamadı"; }
-  btn.disabled = false; btn.textContent = "Giriş";
+  } catch { err.textContent = "Cannot reach the server"; }
+  btn.disabled = false; btn.textContent = "Log in";
 };
 </script>
 </body></html>

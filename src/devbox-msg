@@ -2,10 +2,10 @@
 """devbox-msg — Team board client for sessions running inside tmux.
 
   devbox-msg post "metin"            # herkese
-  devbox-msg post --to claude-3 "…"  # bir oturuma (uzak makinedeki için: claude-3@host-id)
-  devbox-msg post --notify --to claude-3 "…"   # ayrıca o pencereye send-keys ile yaz
+  devbox-msg post --to claude-3 "…"  # to one session (on a remote host: claude-3@host-id)
+  devbox-msg post --notify --to claude-3 "…"   # also type it into that window (send-keys)
   devbox-msg read [--since N] [--mine]
-  devbox-msg who                     # pencereler ve durumları
+  devbox-msg who                     # windows and their status
 
 DEVBOX_URL / DEVBOX_TOKEN come from the tmux global environment (set by the console).
 Sender name = current tmux window name (override with --from).
@@ -41,7 +41,7 @@ def me():
 def call(method, path, body=None):
     url, tok = env("DEVBOX_URL"), env("DEVBOX_TOKEN")
     if not url or not tok:
-        sys.exit("DEVBOX_URL / DEVBOX_TOKEN bulunamadı (console çalışıyor mu?)")
+        sys.exit("DEVBOX_URL / DEVBOX_TOKEN not found (is the console running?)")
     req = urllib.request.Request(url.rstrip("/") + path, method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
@@ -64,7 +64,7 @@ def main():
         if text == "-":
             text = sys.stdin.read()
         m = call("POST", "/api/messages", {"from": a.sender or me(), "to": a.to, "text": text, "deliver": a.notify})
-        print(f"#{m['id']} gönderildi" + (f" (iletildi: {', '.join(m['delivered'])})" if m["delivered"] else ""))
+        print(f"#{m['id']} sent" + (f" (delivered: {', '.join(m['delivered'])})" if m["delivered"] else ""))
     elif a.cmd == "read":
         q = f"?since={a.since}&limit={a.limit}" + (f"&to={me()}" if a.mine else "")
         for m in call("GET", "/api/messages" + q)["messages"]:

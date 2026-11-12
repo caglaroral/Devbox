@@ -13,7 +13,7 @@ def test_host_validation(console):
     st, r = console.call("POST", "/api/hosts", {"label": "x", "hostname": "nohost", "username": "dev", "password": "secret"})
     assert st >= 400 and "refused" in r
     st, r = console.call("POST", "/api/hosts", {"label": "Fake", "hostname": "fakehost", "username": "dev", "password": "nope"})
-    assert st >= 400 and "reddedildi" in r
+    assert st >= 400 and "rejected" in r
 
 
 def test_remote_flow(console):
