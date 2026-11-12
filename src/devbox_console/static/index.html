@@ -183,6 +183,14 @@
             <p class="muted small">API keys, SSH private keys and stored host passwords live here; private keys are only written to a temporary file in RAM (tmpfs) while connecting.</p></div>
         </div>
         <div class="box">
+          <div class="box-head">Event log</div>
+          <div class="box-body">
+            <p class="muted small" id="logInfo">Terminal connects/disconnects (who closed it, after how long, from which device), host reachability, sessions, uploads, logins and console restarts.</p>
+            <pre class="logbox" id="logText"></pre>
+            <div class="row-end"><button class="btn danger" id="logClear">Clear log</button><button class="btn" id="logRefresh">Refresh</button></div>
+          </div>
+        </div>
+        <div class="box">
           <div class="box-head">Console SSH key</div>
           <div class="box-body">
             <p class="muted small">Remote hosts are reached with this key. It is installed automatically if you give a password when adding a host; otherwise add the line below to <code>~/.ssh/authorized_keys</code> on the remote host.</p>

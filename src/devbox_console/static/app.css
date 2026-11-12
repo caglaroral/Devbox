@@ -386,3 +386,6 @@ dialog.wide[open] { display: flex; }
 #dropHint { display: none; position: absolute; inset: 8px; border: 2px dashed var(--accent); border-radius: 10px;
   background: rgba(47,129,247,.12); color: var(--fg); font-weight: 600; place-items: center; z-index: 5; pointer-events: none; }
 #termWrap.dropping #dropHint { display: grid; }
+
+.logbox { margin: 0 0 8px; padding: 8px; max-height: 320px; overflow: auto; background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 6px; font: 11px/1.45 var(--mono); white-space: pre; color: var(--fg-muted); }

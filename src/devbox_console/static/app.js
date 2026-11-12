@@ -136,18 +136,38 @@ function closeWs() { wsWanted = false; if (ws) { ws.onclose = null; ws.close(); 
 /* tmux runs with window-size=latest: a shared window takes the size of the client used last. When the phone
    attaches, the window shrinks and the desktop tab shows dots around a small screen until you type there.
    A focus-in report (ESC [ I) makes this tab the "latest" client again without reaching the program,
-   so send it whenever this device is actually in use. */
+   so send it whenever this device is actually in use.
+   Only real use of this device claims it (no timer): with two screens open a timer would make them fight. */
 let lastClaim = 0;
-function claimSize() {
+function claimSize(gap = 500) {
   if (wsKind !== "tmux" || !ws || ws.readyState !== 1 || document.hidden) return;
-  const now = Date.now(); if (now - lastClaim < 500) return;
+  const now = Date.now(); if (now - lastClaim < (typeof gap === "number" ? gap : 500)) return;
   lastClaim = now;
   wsSend({ t: "in", d: "\x1b[I" });
 }
-window.addEventListener("focus", claimSize);
-$("#termWrap").addEventListener("pointerdown", claimSize, true);
-$("#termWrap").addEventListener("mouseenter", claimSize);
-term.textarea?.addEventListener("focus", claimSize);
+window.addEventListener("focus", () => claimSize());
+$("#termWrap").addEventListener("pointerdown", () => claimSize(), true);
+$("#termWrap").addEventListener("mouseenter", () => claimSize());
+$("#termWrap").addEventListener("mousemove", () => claimSize(2000), { passive: true }); // back at the desk
+$("#termWrap").addEventListener("wheel", () => claimSize(2000), { passive: true, capture: true });
+$("#termWrap").addEventListener("touchstart", () => claimSize(), { passive: true, capture: true });
+term.textarea?.addEventListener("focus", () => claimSize());
+
+/* A socket can look open while it is dead (phone slept, laptop resumed): the terminal just freezes until the
+   server's heartbeat gives up. When the tab comes back, ping it and reconnect at once if there is no answer. */
+let pongTimer = null;
+function checkAlive() {
+  if (!ws || ws.readyState !== 1 || pongTimer) return;
+  const sock = ws;
+  wsSend({ t: "ping" });
+  pongTimer = setTimeout(() => {
+    pongTimer = null;
+    if (ws !== sock) return;
+    ws.onclose = null; try { ws.close(); } catch {}
+    ws = null; wsRetry = 0;
+    if (wsWanted && isTermRoute()) connect();
+  }, 2500);
+}
 
 function connect() {
   if (ws && ws.readyState <= 1) return;
@@ -164,7 +184,10 @@ function connect() {
   ws = new WebSocket(`${proto}://${location.host}${withHost(`/ws/term?${q}`)}`);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
-  ws.onmessage = (ev) => term.write(new Uint8Array(ev.data));
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") { if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; } return; }
+    term.write(new Uint8Array(ev.data));
+  };
   ws.onclose = () => {
     ws = null;
     if (!wsWanted) return;
@@ -837,7 +860,7 @@ function route() {
   if (isTermRoute()) requestAnimationFrame(() => { fit.fit(); if (!ws) connect(); });
   else closeWs();
   if (r === "team") { S.unread = 0; renderUnread(); renderBoard(true); }
-  if (r === "settings") loadSettings();
+  if (r === "settings") { loadSettings(); loadLogs(); }
   if (r === "sessions") loadOtherHosts();
   renderAll();
   if (focusHost) requestAnimationFrame(() => document.getElementById(`grp-${focusHost}`)?.scrollIntoView({ block: "start" }));
@@ -1102,6 +1125,21 @@ async function loadSettings() {
   $("#storeInfo").textContent = st.kind === "vault" ? `HashiCorp Vault · ${st.location} · ${st.mount}/ (${st.mode === "managed" ? "managed by the console" : "external"})` : `file (0600) · ${st.location}`;
   $("#msgInstall").textContent = `mkdir -p ~/.local/bin && curl -fsS ${s.public_url}/devbox-msg -o ~/.local/bin/devbox-msg && chmod +x ~/.local/bin/devbox-msg`;
 }
+async function loadLogs() {
+  try {
+    const r = await api("/api/logs?lines=400");
+    const el = $("#logText");
+    el.textContent = r.lines.length ? r.lines.join("\n") : "No events yet.";
+    $("#logInfo").textContent = `Terminal connects/disconnects (who closed it, after how long, from which device), host reachability, sessions, uploads, logins and console restarts. ` +
+      `${r.files} day file${r.files === 1 ? "" : "s"} · ${Math.ceil(r.bytes / 1024)} KB · kept ${r.days} days, then deleted automatically.`;
+    el.scrollTop = el.scrollHeight;
+  } catch (e) { $("#logText").textContent = e.message; }
+}
+$("#logRefresh").onclick = loadLogs;
+$("#logClear").onclick = async () => {
+  if (!confirm("Delete the whole event log?")) return;
+  try { await api("/api/logs", { method: "DELETE" }); toast("Log cleared"); loadLogs(); } catch (e) { toast(e.message); }
+};
 $("#saveDefaults").onclick = async () => {
   try {
     await api("/api/settings", { method: "PUT", body: { new_window_command: $("#newCmdDefault").value.trim(), projects_root: $("#projectsRoot").value.trim() } });
@@ -1189,8 +1227,9 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   if (renderAll.pending) { renderAll.pending = false; renderAll(); }
   if (isTermRoute() && !ws) connect();
-  else claimSize();
+  else { checkAlive(); claimSize(); }
 });
+window.addEventListener("online", () => { if (isTermRoute()) (ws ? checkAlive() : connect()); });
 
 (async function init() {
   const m = location.hash.match(/^#\/h\/([^/]+)/);

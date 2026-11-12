@@ -100,6 +100,66 @@ def _build_commit() -> str:
 
 
 VERSION = __version__
+LOG_DAYS = max(1, int(os.environ.get("DEVBOX_LOG_DAYS", "7") or 7))
+
+
+class EventLog:
+    """Per-user event log in <data>/users/<name>/logs/YYYYMMDD.log (survives container rebuilds, unlike
+    `docker logs`). Files older than LOG_DAYS days are removed; the user can also clear it from Settings."""
+
+    def __init__(self, path: Path, who: str) -> None:
+        self.dir, self.who, self.day = path, who, ""
+
+    def write(self, event: str, **kv) -> None:
+        now = time.localtime()
+        day = time.strftime("%Y%m%d", now)
+        if day != self.day:
+            self.day = day
+            self.prune()
+        fields = " ".join(f"{k}={json.dumps(v) if isinstance(v, str) and (not v or ' ' in v or '=' in v) else v}"
+                          for k, v in kv.items() if v is not None)
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S', now)} {event} {fields}".rstrip()
+        print(f"[{self.who}] {line}", flush=True)
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            with open(self.dir / f"{day}.log", "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    def files(self) -> list[Path]:
+        return sorted(self.dir.glob("*.log")) if self.dir.is_dir() else []
+
+    def prune(self) -> None:
+        cutoff = time.time() - LOG_DAYS * 86400
+        for f in self.files():
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+            except OSError:
+                pass
+
+    def tail(self, n: int) -> list[str]:
+        out: list[str] = []
+        for f in reversed(self.files()):
+            try:
+                lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            out = lines[-(n - len(out)):] + out
+            if len(out) >= n:
+                break
+        return out
+
+    def clear(self) -> int:
+        n = 0
+        for f in self.files():
+            try:
+                f.unlink()
+                n += 1
+            except OSError:
+                pass
+        return n
 COMMIT = _build_commit()
 CM_DIR = Path(tempfile.gettempdir()) / f"devbox-cm-{os.geteuid()}"  # short path: unix socket limit
 RUNTIME = Path(os.environ.get("DEVBOX_RUNTIME") or ("/dev/shm" if os.path.isdir("/dev/shm") else tempfile.gettempdir())) \
@@ -332,10 +392,14 @@ class Box:
         try:
             rc, raw = await self.run(["tmux", "list-windows", "-a", "-F", WIN_FMT])
         except Exception as e:  # noqa: BLE001  (ssh down etc.)
+            if self.error != str(e):
+                self.user.log.write("host.unreachable", host=self.id, error=str(e)[:300])
             self.error = str(e)
             self.windows = []
             self.broadcast("windows", self.snapshot())
             return
+        if self.error and self.last_ok:
+            self.user.log.write("host.ok", host=self.id, was=self.error[:300])
         self.error = None
         self.last_ok = time.time()
         if rc != 0:  # no tmux server / no session yet: that's simply "no sessions"
@@ -503,6 +567,7 @@ class Box:
                     await self.start_saved(name, resume=True)
                 except Exception as e:  # noqa: BLE001
                     self.error = f"{name} could not be autostarted: {getattr(e, 'text', e)}"
+                    self.user.log.write("session.autostart_failed", host=self.id, name=name, error=str(getattr(e, "text", e))[:300])
 
     async def poll_loop(self) -> None:
         started = False
@@ -557,6 +622,7 @@ class User:
             d.mkdir(parents=True, exist_ok=True)
             os.chmod(d, 0o700)
         self.token = _read_or_create(self.dir / "api_token", 24)
+        self.log = EventLog(self.dir / "logs", name)
         self.boxes: dict[str, Box] = {}
         self.host_listeners: set[asyncio.Queue] = set()
         self.msg_lock = asyncio.Lock()
@@ -925,9 +991,11 @@ async def api_login(req):
     if not ok:
         _fail[ip] = recent + [time.time()]
         await asyncio.sleep(1)
+        print(f"login failed: {name!r} from {ip}", flush=True)
         raise web.HTTPUnauthorized(text="login failed, please try again")
     _fail.pop(ip, None)
     u = await get_user(name)
+    u.log.write("login", ip=ip, ua=req.headers.get("User-Agent", "")[:120])
     if AUTH == "ssh":
         await _install_key(u, local_host(name), password)
         u.drop_box("local")
@@ -1154,6 +1222,7 @@ async def api_create_session(req):
     s["recent_dirs"] = [cwd] + [d for d in s.get("recent_dirs", []) if d != cwd][:9]
     b.save_sessions(s)
     wid = await b.start_saved(name, resume=False) if body.get("start", True) else None
+    b.user.log.write("session.create", host=b.id, name=name, cwd=cwd, started=bool(wid))
     await b.poll_once()
     return web.json_response({**b.snapshot(), "created": wid})
 
@@ -1207,6 +1276,7 @@ async def api_delete_session(req):
     s["hidden"] = [n for n in s.get("hidden", []) if n != name]
     b.save_sessions(s)
     b.activity.pop(name, None)
+    b.user.log.write("session.delete", host=b.id, name=name)
     await b.poll_once()
     return web.json_response(b.snapshot())
 
@@ -1214,6 +1284,7 @@ async def api_delete_session(req):
 async def api_start_session(req):
     b, name, body = B(req), name_of(req), await req.json()
     wid = await b.start_saved(name, resume=bool(body.get("resume", True)))
+    b.user.log.write("session.start", host=b.id, name=name, resume=bool(body.get("resume", True)))
     await b.poll_once()
     return web.json_response({**b.snapshot(), "created": wid})
 
@@ -1230,6 +1301,7 @@ async def api_stop_session(req):
                                "autostart": False, "created": time.time()}
         b.save_sessions(s)
     await b.tmux("kill-window", "-t", live["id"], check=True)
+    b.user.log.write("session.stop", host=b.id, name=name)
     await b.poll_once()
     return web.json_response(b.snapshot())
 
@@ -1329,8 +1401,21 @@ async def api_upload(req):
     rc, out = await b.run(["sh", "-c", UPLOAD_SH, "sh", wid, name, str(UPLOAD_KEEP_MIN)], timeout=90, input=bytes(data))
     path = out.strip()
     if rc or not path:
+        b.user.log.write("upload.failed", host=b.id, window=wid or "-", rc=rc, size=len(data))
         raise web.HTTPInternalServerError(text=f"could not save the image on {b.label} (exit {rc})")
+    b.user.log.write("upload", host=b.id, window=wid or "-", path=path, size=len(data))
     return web.json_response({"path": path, "name": name, "size": len(data)})
+
+
+async def api_logs(req):
+    """GET: the last lines of this user's event log. DELETE: remove it."""
+    log = U(req).log
+    if req.method == "DELETE":
+        return web.json_response({"deleted": log.clear()})
+    n = max(10, min(int(req.query.get("lines", "500")), 5000))
+    files = log.files()
+    return web.json_response({"lines": log.tail(n), "files": len(files), "days": LOG_DAYS,
+                              "bytes": sum(f.stat().st_size for f in files if f.exists())})
 
 
 async def api_dirs(req):
@@ -1556,6 +1641,11 @@ async def ws_term(req):
         await ws.close()
 
     pump_task = asyncio.create_task(pump())
+    t0 = time.monotonic()
+    ua = req.headers.get("User-Agent", "")
+    device = "mobile" if re.search(r"Mobi|Android|iPhone|iPad", ua) else "desktop"
+    u.log.write("term.open", host=b.id, target="shell" if shell_mode else wid or "-", view=view, device=device,
+                ip=req.remote, size=f"{cols}x{rows}")
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -1568,6 +1658,8 @@ async def ws_term(req):
                     os.write(master, str(m.get("d", "")).encode())
                 elif t == "bin":
                     os.write(master, base64.b64decode(m.get("d", "")))
+                elif t == "ping":  # the browser checks that the socket is still alive (after sleep/resume)
+                    await ws.send_str("pong")
                 elif t == "resize":
                     set_winsize(master, max(5, int(m["r"])), max(20, int(m["c"])))
                 elif t == "select" and not shell_mode and WID_RE.fullmatch(str(m.get("w", ""))):
@@ -1585,6 +1677,10 @@ async def ws_term(req):
             elif msg.type == WSMsgType.BINARY:
                 os.write(master, msg.data)
     finally:
+        # one line per terminal: shows whether the browser left or the ssh/tmux process ended (disconnect hunting)
+        ended = "process" if pump_task.done() else "browser"
+        u.log.write("term.close", host=b.id, target="shell" if shell_mode else wid or "-", view=view, device=device,
+                    by=ended, ws_code=ws.close_code, rc=proc.returncode, secs=round(time.monotonic() - t0))
         pump_task.cancel()
         loop.remove_reader(master)
         try:
@@ -1618,7 +1714,7 @@ async def on_startup(app):
     for d in sorted((DATA / "users").iterdir()):
         if d.is_dir() and USER_RE.fullmatch(d.name) and (d / "api_token").exists():
             try:
-                await get_user(d.name)
+                (await get_user(d.name)).log.write("console.start", version=VERSION, commit=COMMIT or None)
             except Exception as e:  # noqa: BLE001  (e.g. user removed from the host)
                 print(f"user {d.name}: {e}", flush=True)
 
@@ -1657,6 +1753,8 @@ def make_app() -> web.Application:
     r.add_post("/api/windows/{wid}/action", api_window_action)
     r.add_get("/api/dirs", api_dirs)
     r.add_post("/api/upload", api_upload)
+    r.add_get("/api/logs", api_logs)
+    r.add_delete("/api/logs", api_logs)
     r.add_get("/api/settings", api_get_settings)
     r.add_put("/api/settings", api_put_settings)
     r.add_put("/api/env", api_put_env)
