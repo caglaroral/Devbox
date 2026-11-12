@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.12
+- Fix: the host editor opened on *Manual*, so saving a host with a stored password or key (even just a
+  new label) deleted that credential. It now opens on the current method, and switching to Manual asks first.
+
 ## v0.7.11
 - Phone ⋯ menu: buttons stay inside the dialog (equal columns; Copy / Paste / Attach and A− / A+ rows);
   "Restart (new conversation)" is now **New conversation**.

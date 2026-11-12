@@ -1022,7 +1022,9 @@ async function openHostEditor(hid = null) {
   $("#hLabel").value = h?.label || ""; $("#hHostname").value = h?.hostname || "";
   $("#hPort").value = h?.port || 22; $("#hUser").value = h?.username || "";
   $("#hPassword").value = ""; $("#hKey").value = ""; $("#hStorePw").checked = h?.auth === "password";
-  setAuthPane(h ? "manual" : "password");
+  // open on the host's current method: an untouched Password / Private key pane sends nothing (keeps it as it is);
+  // "Manual" (drop stored credentials) only applies when it is the current method or explicitly chosen
+  setAuthPane(!h ? "password" : h.auth === "password" ? "password" : h.auth === "custom-key" ? "key" : "manual");
   const AUTH_LABEL = { "custom-key": "pasted private key", "password": "password stored in Vault", "console-key": "console key" };
   $("#hAuthNow").textContent = h ? `Currently: ${AUTH_LABEL[h.auth] || h.auth}. Enter a password or a new key to change it.` : "";
   $("#hDelete").classList.toggle("hidden", !h);
@@ -1052,7 +1054,12 @@ $("#hostForm").addEventListener("submit", async (e) => {
   const body = { label: $("#hLabel").value.trim(), hostname: $("#hHostname").value.trim(),
                  port: +$("#hPort").value || 22, username: $("#hUser").value.trim() };
   if (hAuth === "password" && $("#hPassword").value) { body.password = $("#hPassword").value; body.store_password = $("#hStorePw").checked; }
-  if (hAuth === "manual") body.auth = "manual";
+  if (hAuth === "manual") {
+    const cur = hEditing && S.hosts.find((x) => x.id === hEditing);
+    if (cur && cur.auth !== "console-key" && !confirm("Switch to the console key? The stored " +
+        (cur.auth === "password" ? "password" : "private key") + " is deleted; the console key must already be in authorized_keys on the host.")) return;
+    body.auth = "manual";
+  }
   if (hAuth === "key" && $("#hKey").value.trim()) body.private_key = $("#hKey").value.trim();
   if (!hEditing && hAuth === "password" && !body.password) return toast("Enter a password (or choose Manual / Private key)");
   const btn = $("#hSave"); btn.disabled = true; btn.textContent = "Connecting…";
