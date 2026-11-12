@@ -1124,6 +1124,7 @@ function route() {
     else if (switching && ws) closeWs();
   }
   S.route = r;
+  if (!isTermRoute()) document.title = "Devbox";
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${r === "shell" ? "term" : r}`));
   $$("nav [data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === r));
   $("#app").classList.remove("menu-open");
@@ -1178,7 +1179,7 @@ function renderHead() {
     $("#tDisplay").textContent = `Shell · ${S.host}`; $("#tName").textContent = `${S.login}@${S.host}`;
     $("#tStatus").className = "status s-shell"; $("#tStatus").innerHTML = `<span class="dot"></span>login shell (outside tmux)`;
     $("#tProvider").textContent = ""; $("#tPath").textContent = "";
-    document.title = `Shell · ${S.host} · devbox`;
+    document.title = `Shell · ${S.host} · Devbox`;
     return;
   }
   const w = cur(); if (!w) return;
@@ -1188,7 +1189,7 @@ function renderHead() {
   $("#tStatus").innerHTML = `<span class="dot"></span>${esc(STATUS_LABEL[w.status] || w.status)}`;
   $("#tProvider").textContent = w.provider || "";
   $("#tPath").textContent = w.title ? `${shortPath(w.cwd)}: ${w.title}` : shortPath(w.cwd);
-  if (S.route === "term") document.title = `${w.display} · devbox`;
+  if (S.route === "term") document.title = w.display.toLowerCase() === "devbox" ? "Devbox" : `${w.display} · Devbox`;
 }
 
 /* Sessions page: every host's sessions, grouped by host. The selected host is live (SSE);

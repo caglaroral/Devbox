@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.9
+- Name shown as **Devbox** (sidebar, browser tab; the tab shows `<session> · Devbox` in a terminal).
+
 ## v0.7.8
 - ☰ menu icon stretched horizontally (button frame as before v0.7.7).
 
