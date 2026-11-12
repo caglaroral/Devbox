@@ -234,12 +234,14 @@ class Box:
                 {"env": self.ssh_env(), "start_new_session": True}
         return argv, self.user.spawn_kw()
 
-    async def run(self, argv: list[str], check: bool = False, timeout: float = 25) -> tuple[int, str]:
+    async def run(self, argv: list[str], check: bool = False, timeout: float = 25,
+                  input: bytes | None = None) -> tuple[int, str]:
         cmd, kw = self.wrap(argv)
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kw)
+            *cmd, stdin=asyncio.subprocess.DEVNULL if input is None else asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kw)
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+            out, err = await asyncio.wait_for(proc.communicate(input), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError(f"{self.label}: timed out")
@@ -1253,6 +1255,64 @@ async def api_window_action(req):
     return web.json_response({"ok": True})
 
 
+# ---------------------------------------------------------------- uploads (images sent from the browser)
+
+UPLOAD_MAX = 10 * 1024 * 1024
+UPLOAD_KEEP_MIN = 7 * 24 * 60  # uploads older than 7 days are removed on the next upload
+UPLOAD_MAGIC = [(b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif")]
+# $1 = tmux window id or "" (plain shell), $2 = file name. The image arrives on stdin.
+# Goes to <folder the pane is in>/.devbox/uploads, kept out of git via .git/info/exclude.
+UPLOAD_SH = r"""
+dir=
+if [ -n "$1" ]; then
+  dir=$(tmux display-message -p -t "$1" '#{pane_current_path}' 2>/dev/null)
+  [ -d "$dir" ] || dir=$(tmux display-message -p -t "$1" '#{pane_start_path}' 2>/dev/null)
+fi
+[ -d "$dir" ] || dir=$HOME
+up="$dir/.devbox/uploads"
+mkdir -p "$up" || exit 3
+find "$up" -maxdepth 1 -type f -mmin +$3 -delete 2>/dev/null
+ex=$(cd "$dir" && git rev-parse --git-path info/exclude 2>/dev/null)
+case $ex in ""|/*) ;; *) ex="$dir/$ex" ;; esac
+if [ -n "$ex" ] && ! grep -qxF '.devbox/' "$ex" 2>/dev/null; then
+  mkdir -p "$(dirname "$ex")" && printf '.devbox/\n' >> "$ex"
+fi
+cat > "$up/$2" || exit 4
+printf '%s' "$up/$2"
+"""
+
+
+def image_ext(head: bytes) -> str | None:
+    for magic, ext in UPLOAD_MAGIC:
+        if head.startswith(magic):
+            return ext
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+async def api_upload(req):
+    """Save an image into the folder the session's pane is in; returns the path to put into the prompt."""
+    b = B(req)
+    wid = req.query.get("window", "")
+    if wid and not WID_RE.fullmatch(wid):
+        raise web.HTTPBadRequest(text="bad window id")
+    data = bytearray()
+    async for chunk in req.content.iter_chunked(64 * 1024):
+        data += chunk
+        if len(data) > UPLOAD_MAX:
+            raise web.HTTPRequestEntityTooLarge(max_size=UPLOAD_MAX, actual_size=len(data))
+    ext = image_ext(bytes(data[:16]))
+    if not ext:
+        raise web.HTTPBadRequest(text="only PNG, JPEG, GIF or WebP images")
+    name = time.strftime("img-%Y%m%d-%H%M%S-") + secrets.token_hex(2) + "." + ext
+    rc, out = await b.run(["sh", "-c", UPLOAD_SH, "sh", wid, name, str(UPLOAD_KEEP_MIN)], timeout=90, input=bytes(data))
+    path = out.strip()
+    if rc or not path:
+        raise web.HTTPInternalServerError(text=f"could not save the image on {b.label} (exit {rc})")
+    return web.json_response({"path": path, "name": name, "size": len(data)})
+
+
 async def api_dirs(req):
     b = B(req)
     s = b.load_sessions()
@@ -1576,6 +1636,7 @@ def make_app() -> web.Application:
     r.add_get("/api/windows/{wid}/capture", api_capture)
     r.add_post("/api/windows/{wid}/action", api_window_action)
     r.add_get("/api/dirs", api_dirs)
+    r.add_post("/api/upload", api_upload)
     r.add_get("/api/settings", api_get_settings)
     r.add_put("/api/settings", api_put_settings)
     r.add_put("/api/env", api_put_env)

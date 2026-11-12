@@ -2,7 +2,7 @@
 /* devbox console — client. No build step; xterm.js from CDN.
  * A "session" = saved record (name, display, provider, start folder, command) + tmux window running claude.
  * Hosts: "local" (this machine) + remote machines over SSH; every host has its own sessions.
- * Routes: #/h/<host>/sessions  #/h/<host>/term/<name>  #/h/<host>/shell  #/hosts  #/team  #/settings
+ * Routes: #/sessions (all hosts, grouped)  #/h/<host>/sessions  #/h/<host>/term/<name>  #/h/<host>/shell  #/hosts  #/team  #/settings
  */
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -18,7 +18,8 @@ const S = {
   current: null,          // session name shown in the terminal
   route: "sessions", filter: "all",
   messages: [], lastMsgId: 0, unread: 0,
-  settings: null, dirs: null,
+  settings: null,
+  byHost: {},             // host id -> last snapshot (the Sessions page lists every host)
 };
 
 const STATUS_LABEL = { working: "Working", waiting: "Waiting for approval", idle: "Idle", shell: "Shell", dead: "Exited", stopped: "Stopped" };
@@ -26,15 +27,15 @@ const cur = () => S.windows.find((w) => w.name === S.current);
 const hp = (p) => `#/h/${encodeURIComponent(S.hostId)}/${p}`;
 const curHost = () => S.hosts.find((h) => h.id === S.hostId);
 // endpoints that act on one host get ?host=<id>
-const HOST_SCOPED = /^\/(api\/(sessions|windows|dirs|settings|events)|ws\/term)/;
-function withHost(path) {
+const HOST_SCOPED = /^\/(api\/(sessions|windows|dirs|settings|events|upload)|ws\/term)/;
+function withHost(path, host = S.hostId) {
   if (!HOST_SCOPED.test(path)) return path;
-  return path + (path.includes("?") ? "&" : "?") + "host=" + encodeURIComponent(S.hostId);
+  return path + (path.includes("?") ? "&" : "?") + "host=" + encodeURIComponent(host);
 }
 
 /* ------------------------------------------------------------------ api */
 async function api(path, opts = {}) {
-  const r = await fetch(withHost(path), {
+  const r = await fetch(withHost(path, opts.host || S.hostId), {
     ...opts,
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body,
@@ -44,6 +45,10 @@ async function api(path, opts = {}) {
   return r.json();
 }
 const sessApi = (name, sub = "", opts = {}) => api(`/api/sessions/${encodeURIComponent(name)}${sub}`, opts);
+const termHash = (host, name) => `#/h/${encodeURIComponent(host)}/term/${encodeURIComponent(name)}`;
+const hostWindows = (hid) => (hid === S.hostId ? S.windows : S.byHost[hid]?.windows || []);
+const findWin = (name, hid = S.hostId) => hostWindows(hid).find((x) => x.name === name);
+const hostLabel = (hid) => S.hosts.find((h) => h.id === hid)?.label || (hid === "local" ? S.host : hid);
 
 let toastTimer;
 function toast(msg) {
@@ -106,16 +111,15 @@ term.parser.registerOscHandler(52, (data) => {
   return true;
 });
 
-// Ctrl+Shift+C / Ctrl+Shift+V (and Cmd+C/V on mac).
+// Ctrl+Shift+C (and Cmd+C on mac) copies. Ctrl+V / Ctrl+Shift+V / Cmd+V are left to the browser: its native
+// paste event works on plain http too and also carries images (see the paste handler below).
 term.attachCustomKeyEventHandler((e) => {
   if (e.type !== "keydown") return true;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey && e.shiftKey && k === "c") || (e.metaKey && k === "c" && term.hasSelection())) {
     copyText(term.getSelection()); e.preventDefault(); return false;
   }
-  if ((e.ctrlKey && e.shiftKey && k === "v") || (e.metaKey && k === "v")) {
-    e.preventDefault(); pasteFromClipboard(); return false;
-  }
+  if (k === "v" && ((e.ctrlKey && !e.altKey) || e.metaKey)) return false; // no ^V; the browser fires "paste"
   return true;
 });
 
@@ -128,6 +132,22 @@ function overlay(msg, html = false) {
   o.classList.remove("hidden");
 }
 function closeWs() { wsWanted = false; if (ws) { ws.onclose = null; ws.close(); ws = null; } }
+
+/* tmux runs with window-size=latest: a shared window takes the size of the client used last. When the phone
+   attaches, the window shrinks and the desktop tab shows dots around a small screen until you type there.
+   A focus-in report (ESC [ I) makes this tab the "latest" client again without reaching the program,
+   so send it whenever this device is actually in use. */
+let lastClaim = 0;
+function claimSize() {
+  if (wsKind !== "tmux" || !ws || ws.readyState !== 1 || document.hidden) return;
+  const now = Date.now(); if (now - lastClaim < 500) return;
+  lastClaim = now;
+  wsSend({ t: "in", d: "\x1b[I" });
+}
+window.addEventListener("focus", claimSize);
+$("#termWrap").addEventListener("pointerdown", claimSize, true);
+$("#termWrap").addEventListener("mouseenter", claimSize);
+term.textarea?.addEventListener("focus", claimSize);
 
 function connect() {
   if (ws && ws.readyState <= 1) return;
@@ -143,7 +163,7 @@ function connect() {
   overlay("Connecting…");
   ws = new WebSocket(`${proto}://${location.host}${withHost(`/ws/term?${q}`)}`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); if (!isTouch()) term.focus(); };
+  ws.onopen = () => { wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
   ws.onmessage = (ev) => term.write(new Uint8Array(ev.data));
   ws.onclose = () => {
     ws = null;
@@ -237,6 +257,55 @@ $("#textBtn").onclick = () => openScreenText();
   el.addEventListener("contextmenu", (e) => { if (isTouch()) e.preventDefault(); });
 })();
 
+/* images: paste / drop / 📎 → saved into <session folder>/.devbox/uploads on its host, path typed into the prompt */
+const UPLOAD_MAX = 10 * 1024 * 1024;
+const imageFiles = (list) => [...(list || [])].filter((f) => f && f.type.startsWith("image/"));
+async function sendImages(files) {
+  if (!files.length) return;
+  if (!isTermRoute() || (S.route === "term" && !cur()?.running)) return toast("Open a running session first");
+  const w = S.route === "term" ? cur() : null, paths = [];
+  for (const f of files) {
+    if (f.size > UPLOAD_MAX) { toast(`${f.name || "image"}: larger than 10 MB`); continue; }
+    toast(`Sending ${f.name || "image"} (${Math.ceil(f.size / 1024)} KB)…`);
+    try {
+      const q = w ? `?window=${encodeURIComponent(w.id)}` : "";
+      const r = await fetch(withHost(`/api/upload${q}`), { method: "POST", body: f, headers: { "Content-Type": f.type || "application/octet-stream" } });
+      if (r.status === 401) { location.href = "/login"; return; }
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      paths.push((await r.json()).path);
+    } catch (e) { toast(`Upload failed: ${e.message}`); }
+  }
+  if (!paths.length) return;
+  const quote = (p) => (/^[\w@%+=:,./~-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
+  term.paste(paths.map(quote).join(" ") + " "); // like dropping files on a local terminal: claude attaches them
+  toast(paths.length === 1 ? `Image sent: ${paths[0].split("/").slice(-3).join("/")}` : `${paths.length} images sent`);
+  if (!isTouch()) term.focus();
+}
+$("#termWrap").addEventListener("paste", (e) => {
+  const files = imageFiles([...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()));
+  if (!files.length) return; // plain text: xterm pastes it
+  e.preventDefault(); e.stopPropagation();
+  sendImages(files);
+}, true);
+(() => {
+  const el = $("#termWrap");
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  el.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; depth++; el.classList.add("dropping"); e.preventDefault(); });
+  el.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  el.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; el.classList.remove("dropping"); } });
+  el.addEventListener("drop", (e) => {
+    depth = 0; el.classList.remove("dropping");
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    const files = imageFiles(e.dataTransfer.files);
+    files.length ? sendImages(files) : toast("Only images can be sent");
+  });
+})();
+const pickImages = () => { $("#attachInput").value = ""; $("#attachInput").click(); };
+$("#attachInput").addEventListener("change", (e) => sendImages(imageFiles(e.target.files)));
+$("#attachBtn").onclick = pickImages;
+
 /* keybar */
 const KEYS = { esc: "\x1b", tab: "\t", shifttab: "\x1b[Z", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D", enter: "\r", ctrlc: "\x03" };
 function setCtrl(on) { ctrlArmed = on; $("#ctrlKey").classList.toggle("on", on); }
@@ -250,6 +319,7 @@ $("#keybar").addEventListener("click", (e) => {
   if (k) return wsSend({ t: "in", d: KEYS[k] });
   if (a === "select") return term.hasSelection() ? copyText(term.getSelection()) : openScreenText();
   if (a === "paste") return pasteFromClipboard();
+  if (a === "attach") return pickImages();
   if (a === "manage") return openManage();
   if (a === "compose") return openPasteDialog("Type", "Comfortable typing with autocorrect and dictation. Send passes it to the terminal.", true);
 });
@@ -313,7 +383,8 @@ $("#pasteArea").addEventListener("keydown", (e) => {
 
 /* ------------------------------------------------------------------ session actions */
 function applySnapshot(snap) {
-  if (snap.host_id && snap.host_id !== S.hostId) return;
+  if (snap.host_id) S.byHost[snap.host_id] = snap;
+  if (snap.host_id && snap.host_id !== S.hostId) { renderCards(); renderSidebar(); return; }
   Object.assign(S, { windows: snap.windows, session: snap.session, host: snap.host, user: snap.user || S.user,
     login: snap.login || snap.user, error: snap.error });
   renderAll();
@@ -325,47 +396,47 @@ function applySnapshot(snap) {
   }
 }
 
-async function startSession(name, resume = true) {
+async function startSession(name, resume = true, host = S.hostId) {
   try {
-    applySnapshot(await sessApi(name, "/start", { method: "POST", body: { resume } }));
+    applySnapshot(await sessApi(name, "/start", { method: "POST", body: { resume }, host }));
     toast(resume ? "Resuming (--continue)" : "Started");
-    go(hp(`term/${encodeURIComponent(name)}`));
+    go(termHash(host, name));
   } catch (e) { toast(e.message); }
 }
-async function stopSession(name, confirmed = false) {
+async function stopSession(name, confirmed = false, host = S.hostId) {
   if (!confirmed && !confirm(`Stop "${name}"? claude exits, the saved session stays; you can resume it later.`)) return false;
-  try { applySnapshot(await sessApi(name, "/stop", { method: "POST" })); toast("Stopped"); return true; } catch (e) { toast(e.message); return false; }
+  try { applySnapshot(await sessApi(name, "/stop", { method: "POST", host })); toast("Stopped"); return true; } catch (e) { toast(e.message); return false; }
 }
-async function deleteSession(name, confirmed = false) {
+async function deleteSession(name, confirmed = false, host = S.hostId) {
   if (!confirmed && !confirm(`Delete "${name}"? It is stopped if running and the saved session is deleted. (The project folder is not touched.)`)) return false;
   try {
-    applySnapshot(await sessApi(name, "", { method: "DELETE" })); toast("Deleted");
-    if (S.current === name && S.route === "term") go(hp("sessions"));
+    applySnapshot(await sessApi(name, "", { method: "DELETE", host })); toast("Deleted");
+    if (S.current === name && S.route === "term" && host === S.hostId) go("#/sessions");
     return true;
   } catch (e) { toast(e.message); return false; }
 }
-function openSession(name) {
-  const w = S.windows.find((x) => x.name === name); if (!w) return;
-  go(hp(`term/${encodeURIComponent(name)}`));
+function openSession(name, host = S.hostId) {
+  if (host === S.hostId && !findWin(name, host)) return;
+  go(termHash(host, name));
 }
 
-async function hideSession(name, hidden = true) {
+async function hideSession(name, hidden = true, host = S.hostId) {
   try {
-    applySnapshot(await sessApi(name, "/hide", { method: "POST", body: { hidden } }));
+    applySnapshot(await sessApi(name, "/hide", { method: "POST", body: { hidden }, host }));
     toast(hidden ? "Removed from view — still running on the machine" : "Brought back");
     return true;
   } catch (e) { toast(e.message); return false; }
 }
 
 /* "Close…": ask whether to really end it or only remove it from the view */
-let clName = null;
-function closeAsk(name) {
-  const w = S.windows.find((x) => x.name === name); if (!w) return;
-  clName = name;
+let clName = null, clHost = null;
+function closeAsk(name, host = S.hostId) {
+  const w = findWin(name, host); if (!w) return;
+  clName = name; clHost = host;
   $("#clTitle").textContent = `Close ${w.display}`;
   $("#clInfo").textContent = w.running
-    ? `${w.external ? "tmux window opened outside the console" : "Running session"} · ${S.host} · ${shortPath(w.cwd)}`
-    : `Stopped session · ${S.host}`;
+    ? `${w.external ? "tmux window opened outside the console" : "Running session"} · ${hostLabel(host)} · ${shortPath(w.cwd)}`
+    : `Stopped session · ${hostLabel(host)}`;
   const stop = $('#closeDlg [data-cl="stop"]'), del = $('#closeDlg [data-cl="delete"]'), hide = $('#closeDlg [data-cl="hide"]');
   stop.classList.toggle("hidden", !w.running);
   del.classList.toggle("hidden", !!w.external);
@@ -378,15 +449,16 @@ function closeAsk(name) {
 }
 $("#closeDlg").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-cl]"); if (!b) return;
-  const a = b.dataset.cl, name = clName;
+  const a = b.dataset.cl, name = clName, host = clHost;
   $("#closeDlg").close();
   if (a === "cancel" || !name) return;
   let ok = false;
-  if (a === "hide") ok = await hideSession(name, true);
-  if (a === "stop") ok = await stopSession(name, true);
-  if (a === "delete") ok = await deleteSession(name, true);
-  if (ok) { closeEditor(); if (S.current === name && S.route === "term" && a !== "hide") go(hp("sessions")); }
-  if (ok && a === "hide" && S.current === name && S.route === "term") go(hp("sessions"));
+  if (a === "hide") ok = await hideSession(name, true, host);
+  if (a === "stop") ok = await stopSession(name, true, host);
+  if (a === "delete") ok = await deleteSession(name, true, host);
+  if (ok) closeEditor();
+  const here = S.current === name && S.route === "term" && host === S.hostId;
+  if (ok && here) go("#/sessions");
 });
 
 /* manage dialog (inside a terminal) */
@@ -408,7 +480,7 @@ $("#manageDlg").addEventListener("click", async (e) => {
   try {
     if (a === "close") dlg.close();
     if (a === "interrupt") { await winAction({ action: "interrupt" }); toast("Ctrl‑C sent"); }
-    if (a === "edit") { dlg.close(); openEditor(w.name); }
+    if (a === "edit") { dlg.close(); openEditor(w.name, S.hostId); }
     if ((a === "restart" || a === "resume") && w.running) {
       if (!confirm("Kill claude and restart it in the same folder?")) return;
       let cmd = w.command || S.settings?.new_window_command || "claude";
@@ -426,47 +498,75 @@ $("#manageDlg").addEventListener("click", async (e) => {
 $("#mgSend").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $('[data-mg="send"]').click(); } });
 
 /* ------------------------------------------------------------------ session editor (create / update / delete) */
-let edName = null; // null = creating
+let edName = null;           // null = creating
+let edHost = "local";        // host the session lives on (chosen in the editor when creating)
+let edDirs = null;           // folder suggestions of edHost
+let edSettings = null;       // settings of edHost (default command)
 
 async function ensureSettings() { if (!S.settings) { try { S.settings = await api("/api/settings"); } catch {} } return S.settings; }
-async function loadDirs(force = false) {
-  if (S.dirs && !force) return S.dirs;
-  try { S.dirs = await api("/api/dirs"); } catch { S.dirs = { recent: [], dirs: [], root: "" }; }
-  return S.dirs;
+
+function renderHostSelect() {
+  const list = S.hosts.length ? S.hosts : [{ id: "local", label: S.host, remote: false }];
+  $("#fHost").innerHTML = list.map((h) =>
+    `<option value="${esc(h.id)}">${h.remote ? "⇄" : "⌂"} ${esc(h.label)}${h.error ? " — not connected" : ""}</option>`).join("");
+  $("#fHost").value = edHost;
+}
+function nextFreeName(hid) {
+  const used = new Set(hostWindows(hid).map((x) => x.name));
+  let n = 1; while (used.has(`claude-${n}`)) n++;
+  return `claude-${n}`;
+}
+// folder suggestions + default command come from the chosen host
+async function loadEditorHost(fillDefaults) {
+  const hid = edHost;
+  $("#dirPick").innerHTML = `<div class="muted small">Loading folders on ${esc(hostLabel(hid))}…</div>`;
+  const [st, d] = await Promise.all([
+    api("/api/settings", { host: hid }).catch(() => null),
+    api("/api/dirs", { host: hid }).catch(() => ({ recent: [], dirs: [], root: "" })),
+  ]);
+  if (hid !== edHost) return; // host changed again meanwhile
+  edSettings = st; edDirs = d;
+  if (fillDefaults) {
+    $("#fCmd").value = st?.new_window_command ?? "claude";
+    $("#fCwd").value = d.recent[0] ? shortPath(d.recent[0]) : (d.root || "");
+  }
+  renderDirPick();
 }
 
-async function openEditor(name = null) {
-  edName = name;
-  const w = name ? S.windows.find((x) => x.name === name) : null;
-  const st = await ensureSettings();
+async function openEditor(name = null, host = S.hostId) {
+  edName = name; edHost = host; edDirs = null;
+  const w = name ? findWin(name, host) : null;
   $("#edTitle").textContent = w ? (w.saved ? "Edit session" : "Save session") : "New session";
+  renderHostSelect();
+  $("#fHost").disabled = !!w; // an existing session cannot move to another machine
   if (w) {
     $("#fDisplay").value = w.display === w.name ? "" : w.display;
     $("#fName").value = w.name; $("#fProvider").value = w.provider || "";
     $("#fCwd").value = shortPath(w.cwd || ""); $("#fCmd").value = w.command ?? "";
     $("#fAutostart").checked = !!w.autostart;
   } else {
-    const used = new Set(S.windows.map((x) => x.name));
-    let n = 1; while (used.has(`claude-${n}`)) n++;
-    $("#fDisplay").value = ""; $("#fName").value = `claude-${n}`; $("#fProvider").value = "";
-    $("#fCmd").value = st?.new_window_command ?? "claude"; $("#fAutostart").checked = false;
-    $("#fCwd").value = "";
+    $("#fDisplay").value = ""; $("#fName").value = nextFreeName(host); $("#fProvider").value = "";
+    $("#fCmd").value = "claude"; $("#fAutostart").checked = false; $("#fCwd").value = "";
   }
   $("#edDelete").classList.toggle("hidden", !w);
   $("#edSaveStart").textContent = !w ? "Create and start" : w.running ? "Save" : "Save and start";
   $("#edSave").classList.toggle("hidden", !!w?.running);
   $("#edSave").textContent = w ? "Save" : "Save only";
   $("#app").classList.add("editor-open"); $("#editor").setAttribute("aria-hidden", "false");
-  const d = await loadDirs(true);
-  if (!w && !$("#fCwd").value) $("#fCwd").value = d.recent[0] ? shortPath(d.recent[0]) : (d.root || "");
-  renderDirPick();
   if (!isTouch()) (w ? $("#fDisplay") : $("#fCwd")).focus();
+  await loadEditorHost(!w);
 }
 function closeEditor() { $("#app").classList.remove("editor-open"); $("#editor").setAttribute("aria-hidden", "true"); }
 $("#edClose").onclick = closeEditor;
+$("#fHost").addEventListener("change", () => {
+  const auto = /^claude-\d+$/.test($("#fName").value);
+  edHost = $("#fHost").value;
+  if (auto) $("#fName").value = nextFreeName(edHost);
+  loadEditorHost(true);
+});
 
 function renderDirPick() {
-  const d = S.dirs || { recent: [], dirs: [] };
+  const d = edDirs || { recent: [], dirs: [] };
   const q = $("#fCwd").value.trim().toLowerCase();
   const recent = d.recent.map((p) => ({ p, r: true }));
   const pool = [...recent, ...d.dirs.filter((p) => !d.recent.includes(p)).map((p) => ({ p }))];
@@ -493,29 +593,29 @@ $("#sessForm").addEventListener("submit", async (e) => {
     display: $("#fDisplay").value.trim(), provider: $("#fProvider").value.trim(),
     cwd: $("#fCwd").value.trim(), command: $("#fCmd").value.trim(), autostart: $("#fAutostart").checked,
   };
-  const name = $("#fName").value.trim();
+  const name = $("#fName").value.trim(), host = edHost;
   try {
     if (!edName) {
-      const snap = await api("/api/sessions", { method: "POST", body: { ...body, name, start } });
+      const snap = await api("/api/sessions", { method: "POST", body: { ...body, name, start }, host });
       applySnapshot(snap); closeEditor();
-      toast(start ? "Session opened — claude started" : "Saved");
-      if (start) openSession(name);
+      toast(start ? `Session opened on ${hostLabel(host)} — claude started` : `Saved on ${hostLabel(host)}`);
+      if (start) openSession(name, host);
     } else {
-      const was = S.windows.find((x) => x.name === edName);
-      applySnapshot(await sessApi(edName, "", { method: "PATCH", body: { ...body, new_name: name } }));
-      if (S.current === edName) { S.current = name; history.replaceState(null, "", hp(`term/${encodeURIComponent(name)}`)); }
+      const was = findWin(edName, host);
+      applySnapshot(await sessApi(edName, "", { method: "PATCH", body: { ...body, new_name: name }, host }));
+      if (S.current === edName && host === S.hostId) { S.current = name; if (S.route === "term") history.replaceState(null, "", termHash(host, name)); }
       closeEditor(); toast("Saved");
-      if (start && was && !was.running) await startSession(name, true);
+      if (start && was && !was.running) await startSession(name, true, host);
     }
   } catch (err) { toast(err.message); }
 });
-$("#edDelete").onclick = () => closeAsk(edName);
+$("#edDelete").onclick = () => closeAsk(edName, edHost);
 
 /* ------------------------------------------------------------------ hosts (local + remote machines) */
 function switchHost(hid) {
   if (hid === S.hostId) return;
   closeWs();
-  S.hostId = hid; S.windows = []; S.current = null; S.dirs = null; S.settings = null; S.error = null;
+  S.hostId = hid; S.windows = S.byHost[hid]?.windows || []; S.current = null; S.settings = null; S.error = null;
   const h = curHost(); S.host = h?.label || hid;
   term.reset();
   startEvents();
@@ -619,24 +719,6 @@ $("#hostCards").addEventListener("click", async (e) => {
   }
 });
 
-function renderHostBanner() {
-  const h = curHost(), el = $("#hostBanner");
-  if (!h || !h.remote) { el.classList.add("hidden"); return; }
-  const i = h.info || {};
-  const miss = [!i.tmux && "tmux", !i.claude && "claude"].filter(Boolean);
-  el.className = miss.length || h.error ? "warn" : "";
-  el.innerHTML = `<span>⇄ <b>${esc(h.label)}</b> · <code>${esc(h.username)}@${esc(h.hostname)}${h.port && h.port !== 22 ? ":" + h.port : ""}</code></span>
-    <span class="muted">${esc(i.os || "")}</span>
-    ${i.tmux ? `<span class="pill">${esc(i.tmux)}</span>` : ""}${i.claude ? `<span class="pill">claude ${esc(i.claude.split(" ")[0])}</span>` : ""}
-    ${miss.length ? `<span>⚠ Missing: <b>${miss.join(", ")}</b> — connect over SSH and install.</span>` : ""}
-    <span class="grow"></span><button class="btn" data-hb="ssh">Open SSH</button><button class="btn" data-hb="edit">Edit</button>`;
-}
-$("#hostBanner").addEventListener("click", (e) => {
-  const a = e.target.dataset?.hb;
-  if (a === "ssh") go(hp("shell"));
-  if (a === "edit") openHostEditor(S.hostId);
-});
-
 let hEditing = null, hAuth = "password";
 function setAuthPane(a) {
   hAuth = a;
@@ -727,18 +809,20 @@ function go(hash) { if (location.hash !== hash) location.hash = hash; else route
 
 function route() {
   let parts = location.hash.replace(/^#\/?/, "").split("/");
-  if (parts[0] === "h") {
+  const hostScoped = parts[0] === "h";
+  if (hostScoped) {
     const hid = decodeURIComponent(parts[1] || "local");
     if (hid !== S.hostId) switchHost(hid);
     parts = parts.slice(2);
   }
   const [page, arg] = parts;
+  const focusHost = hostScoped && page === "sessions" ? S.hostId : null;
   const r = ["sessions", "hosts", "team", "settings", "term", "shell"].includes(page) ? page : "sessions";
   const wantKind = r === "shell" ? "shell" : r === "term" ? "tmux" : null;
   if (ws && wantKind !== wsKind) closeWs();
   if (r === "term") {
     const name = decodeURIComponent(arg || "");
-    if (S.windows.length && !S.windows.find((w) => w.name === name)) { go(hp("sessions")); return; }
+    if (S.windows.length && !S.windows.find((w) => w.name === name)) { go("#/sessions"); return; }
     if (!S.windows.length) { S.current = name; S.route = "term"; }
     const switching = S.current !== name;
     S.current = name;
@@ -749,13 +833,14 @@ function route() {
   S.route = r;
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${r === "shell" ? "term" : r}`));
   $$("nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === r));
-  $("[data-nav=sessions]").setAttribute("href", hp("sessions"));
   $("#app").classList.remove("menu-open");
   if (isTermRoute()) requestAnimationFrame(() => { fit.fit(); if (!ws) connect(); });
   else closeWs();
   if (r === "team") { S.unread = 0; renderUnread(); renderBoard(true); }
   if (r === "settings") loadSettings();
+  if (r === "sessions") loadOtherHosts();
   renderAll();
+  if (focusHost) requestAnimationFrame(() => document.getElementById(`grp-${focusHost}`)?.scrollIntoView({ block: "start" }));
 }
 window.addEventListener("hashchange", route);
 
@@ -780,9 +865,8 @@ function renderAll() {
 
 function renderSidebar() {
   const running = S.windows.filter((w) => w.running);
-  $("#sessionCount").textContent = S.windows.length;
-  $("#shellItem li").classList.toggle("active", S.route === "shell");
-  $("#shellItem .nm").textContent = S.hostId === "local" ? "Shell" : `SSH · ${S.host}`;
+  $("#sessionCount").textContent = (S.hosts.length ? S.hosts : [{ id: S.hostId }])
+    .reduce((n, h) => n + hostSessions(h).filter((x) => !x.hidden).length, 0);
   $("#whoUser").textContent = S.user || "";
   const nh = S.hosts.length || 1;
   $("#whoHost").textContent = `${nh} host${nh === 1 ? "" : "s"} · ${running.length} running here`;
@@ -810,21 +894,24 @@ function renderHead() {
   if (S.route === "term") document.title = `${w.display} · devbox`;
 }
 
-function renderCards() {
-  $("#errorBox").classList.toggle("hidden", !S.error);
-  $("#errorBox").textContent = S.error || "";
-  $("#vaultHost").textContent = S.hosts.length > 1 || S.hostId !== "local" ? `· ${S.host}` : "";
-  renderHostBanner();
-  const q = $("#sessFilter").value.trim().toLowerCase();
-  const nHidden = S.windows.filter((w) => w.hidden).length;
-  $("#hiddenSeg").textContent = nHidden ? `Hidden (${nHidden})` : "Hidden";
-  const list = S.windows.filter((w) =>
-    (S.filter === "hidden" ? w.hidden : !w.hidden && (S.filter === "all" || (S.filter === "running") === !!w.running)) &&
-    (!q || [w.display, w.name, w.cwd, w.provider, w.command].join(" ").toLowerCase().includes(q)));
-  const stopped = S.windows.filter((w) => !w.running && !w.hidden).length;
-  $("#startAllBtn").classList.toggle("hidden", !stopped);
-  setHTML($("#cards"), list.length ? list.map((w) => `
-    <div class="card s-${w.status} ${w.running ? "" : "off"} ${w.hidden ? "hidden-card" : ""}" data-name="${esc(w.name)}">
+/* Sessions page: every host's sessions, grouped by host. The selected host is live (SSE);
+   the others are refreshed by loadOtherHosts() while this page is open. */
+let othersBusy = false;
+async function loadOtherHosts(refresh = false) {
+  if (othersBusy) return;
+  othersBusy = true;
+  try {
+    await Promise.all(S.hosts.filter((h) => h.id !== S.hostId).map((h) =>
+      api(`/api/windows${refresh ? "?refresh=1" : ""}`, { host: h.id })
+        .then((snap) => { S.byHost[h.id] = snap; })
+        .catch((e) => { S.byHost[h.id] = { host_id: h.id, windows: S.byHost[h.id]?.windows || [], error: e.message }; })));
+  } finally { othersBusy = false; }
+  renderCards(); renderSidebar();
+}
+
+function cardHTML(w, hid) {
+  return `
+    <div class="card s-${w.status} ${w.running ? "" : "off"} ${w.hidden ? "hidden-card" : ""}" data-host="${esc(hid)}" data-name="${esc(w.name)}">
       <div class="card-head">
         <span class="tile">${esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
         <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.saved || w.external ? "" : " · unsaved"}</span></div>
@@ -835,7 +922,7 @@ function renderCards() {
       ${w.running ? `<pre>${esc((w.preview || []).join("\n"))}</pre>` : ""}
       <div class="card-foot">
         ${w.external ? `<span class="pill ext" title="tmux session opened outside the console: ${esc(w.tmux_session)}">external · ${esc(w.tmux_session)}</span>` : ""}
-        ${w.hidden ? `<button class="btn" data-act="unhide">Geri getir</button>` : ""}
+        ${w.hidden ? `<button class="btn" data-act="unhide">Bring back</button>` : ""}
         ${w.provider ? `<span class="pill">✦ ${esc(w.provider)}</span>` : ""}
         <code class="cmd">${esc(w.command || w.cmd || "")}</code>
         ${w.autostart ? '<span class="pill" title="Starts automatically">auto</span>' : ""}
@@ -845,8 +932,51 @@ function renderCards() {
           ? (w.status === "dead" ? `<button class="btn" data-act="restart">Restart</button>` : "") + `<button class="btn primary" data-act="open">Connect</button>`
           : `<button class="btn" data-act="fresh" title="New conversation">Start</button><button class="btn primary" data-act="resume" title="claude --continue">Resume</button>`}
       </div>
-    </div>`).join("")
-    : `<div class="empty">${S.windows.length ? "No matching session." : "No sessions yet.<br><br><button class='btn primary' data-act='new'>＋ Create the first session</button><br><br><span class='small'>Each session is a claude running inside tmux in a folder you choose.</span>"}</div>`);
+    </div>`;
+}
+
+function groupHead(h, wins) {
+  const i = h.info || {};
+  const miss = h.remote ? [!i.tmux && "tmux", !i.claude && "claude"].filter(Boolean) : [];
+  const err = h.id === S.hostId ? S.error || h.error : S.byHost[h.id]?.error || h.error;
+  const addr = h.remote ? `${h.username}@${h.hostname}${h.port && h.port !== 22 ? ":" + h.port : ""}` : "this machine";
+  const running = wins.filter((w) => w.running).length;
+  return `<div class="grp-head ${err || miss.length ? "warn" : ""}" data-host="${esc(h.id)}">
+      <span class="hico">${h.remote ? "⇄" : "⌂"}</span><b>${esc(h.label)}</b>
+      <span class="dot ${hostDot(h)}" title="${err ? "not connected" : "connected"}"></span>
+      <code class="muted small hide-mobile">${esc(addr)}</code>
+      <span class="muted small">${wins.length} · ${running} running</span>
+      ${err ? `<span class="danger-text small">${esc(err)}</span>` : ""}
+      ${miss.length ? `<span class="small">⚠ Missing: <b>${miss.join(", ")}</b></span>` : ""}
+      <span class="grow"></span>
+      <button class="btn" data-ga="shell">${h.remote ? "SSH" : "Shell"}</button>
+      <button class="btn" data-ga="new">＋ New<span class="hide-mobile"> session</span></button>
+    </div>`;
+}
+
+function renderCards() {
+  $("#errorBox").classList.add("hidden");
+  const q = $("#sessFilter").value.trim().toLowerCase();
+  const hosts = S.hosts.length ? S.hosts : [{ id: S.hostId, label: S.host, remote: S.hostId !== "local" }];
+  const every = hosts.flatMap((h) => hostWindows(h.id));
+  const nHidden = every.filter((w) => w.hidden).length;
+  $("#hiddenSeg").textContent = nHidden ? `Hidden (${nHidden})` : "Hidden";
+  $("#startAllBtn").classList.toggle("hidden", !every.some((w) => !w.running && !w.hidden));
+  const match = (w) =>
+    (S.filter === "hidden" ? w.hidden : !w.hidden && (S.filter === "all" || (S.filter === "running") === !!w.running)) &&
+    (!q || [w.display, w.name, w.cwd, w.provider, w.command].join(" ").toLowerCase().includes(q));
+  const narrowed = q || S.filter !== "all";
+  let shown = 0;
+  const groups = hosts.map((h) => {
+    const wins = hostWindows(h.id), list = wins.filter(match);
+    shown += list.length;
+    if (narrowed && !list.length) return "";
+    const body = list.length ? `<div class="cards">${list.map((w) => cardHTML(w, h.id)).join("")}</div>`
+      : `<div class="grp-empty muted small">${S.byHost[h.id] || h.id === S.hostId ? "No sessions on this host." : "Loading…"}
+          <button class="btn" data-ga="new">＋ New session here</button></div>`;
+    return `<section class="grp" id="grp-${esc(h.id)}" data-host="${esc(h.id)}">${groupHead(h, wins.filter((w) => !w.hidden))}${body}</section>`;
+  }).join("");
+  setHTML($("#cards"), narrowed && !shown ? `<div class="empty">No matching session.</div>` : groups);
 }
 
 function renderTargets() {
@@ -861,37 +991,45 @@ function renderTargets() {
   }
 }
 
-$("#shellItem").addEventListener("click", () => go(hp("shell")));
 $("#cards").addEventListener("click", async (e) => {
-  const actBtn = e.target.closest("[data-act]");
-  const card = e.target.closest(".card");
-  const act = actBtn?.dataset.act;
-  if (act === "new") return openEditor();
-  if (!card) return;
-  const name = card.dataset.name, w = S.windows.find((x) => x.name === name);
-  if (act === "edit") return openEditor(name);
-  if (act === "close") return closeAsk(name);
-  if (act === "unhide") return hideSession(name, false);
-  if (act === "resume") return startSession(name, true);
-  if (act === "fresh") return startSession(name, false);
+  const ga = e.target.closest("[data-ga]");
+  if (ga) {
+    const hid = ga.closest("[data-host]").dataset.host;
+    if (ga.dataset.ga === "new") return openEditor(null, hid);
+    if (ga.dataset.ga === "shell") return go(`#/h/${encodeURIComponent(hid)}/shell`);
+    return;
+  }
+  const card = e.target.closest(".card"); if (!card) return;
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  const name = card.dataset.name, host = card.dataset.host, w = findWin(name, host);
+  if (act === "edit") return openEditor(name, host);
+  if (act === "close") return closeAsk(name, host);
+  if (act === "unhide") return hideSession(name, false, host);
+  if (act === "resume") return startSession(name, true, host);
+  if (act === "fresh") return startSession(name, false, host);
   if (act === "restart") {
-    try { await api(`/api/windows/${encodeURIComponent(w.id)}/action`, { method: "POST", body: { action: "respawn", command: w.command || "claude" } }); toast("Restarted"); }
+    try { await api(`/api/windows/${encodeURIComponent(w.id)}/action`, { method: "POST", body: { action: "respawn", command: w.command || "claude" }, host }); toast("Restarted"); }
     catch (err) { toast(err.message); }
     return;
   }
-  if (act === "open" || w?.running) return openSession(name);
-  openEditor(name); // a stopped card: show its details
+  if (act === "open" || w?.running) return openSession(name, host);
+  openEditor(name, host); // a stopped card: show its details
 });
 $("#sessFilter").addEventListener("input", renderCards);
 function setFilter(f) {
   S.filter = f; $$("#sessView button").forEach((x) => x.classList.toggle("on", x.dataset.f === f)); renderCards();
 }
 $("#sessView").addEventListener("click", (e) => { const b = e.target.closest("[data-f]"); if (b) setFilter(b.dataset.f); });
-$("#refreshBtn").onclick = async () => { applySnapshot(await api("/api/windows?refresh=1")); toast("Refreshed"); };
+$("#refreshBtn").onclick = async () => {
+  try { applySnapshot(await api("/api/windows?refresh=1")); } catch (e) { toast(e.message); }
+  await loadOtherHosts(true); toast("Refreshed");
+};
 $("#startAllBtn").onclick = async () => {
-  const stopped = S.windows.filter((w) => !w.running && !w.hidden);
+  const stopped = (S.hosts.length ? S.hosts : [{ id: S.hostId }]).flatMap((h) =>
+    hostWindows(h.id).filter((w) => !w.running && !w.hidden).map((w) => ({ name: w.name, host: h.id })));
   for (const w of stopped) {
-    try { applySnapshot(await sessApi(w.name, "/start", { method: "POST", body: { resume: true } })); } catch (e) { toast(`${w.name}: ${e.message}`); }
+    try { applySnapshot(await sessApi(w.name, "/start", { method: "POST", body: { resume: true }, host: w.host })); }
+    catch (e) { toast(`${w.name}@${hostLabel(w.host)}: ${e.message}`); }
   }
   toast(`${stopped.length} sessions started`);
 };
@@ -967,7 +1105,7 @@ async function loadSettings() {
 $("#saveDefaults").onclick = async () => {
   try {
     await api("/api/settings", { method: "PUT", body: { new_window_command: $("#newCmdDefault").value.trim(), projects_root: $("#projectsRoot").value.trim() } });
-    S.settings = null; S.dirs = null; toast("Saved");
+    S.settings = null; toast("Saved");
   } catch (err) { toast(err.message); }
 };
 $("#envForm").addEventListener("submit", async (e) => {
@@ -993,12 +1131,14 @@ function openPalette() { $("#paletteInput").value = ""; palSel = 0; renderPalett
 function renderPalette() {
   const q = $("#paletteInput").value.toLowerCase();
   const all = [
-    ...S.windows.map((w) => ({ label: w.display + (w.hidden ? " (hidden)" : ""), k: `${w.name} · ${STATUS_LABEL[w.status] || ""} · ${shortPath(w.cwd)}`, dot: w.status, run: () => openSession(w.name) })),
+    ...(S.hosts.length ? S.hosts : [{ id: S.hostId }]).flatMap((h) => hostWindows(h.id).map((w) => ({
+      label: w.display + (w.hidden ? " (hidden)" : ""), dot: w.status, run: () => openSession(w.name, h.id),
+      k: `${w.name}${S.hosts.length > 1 ? " @" + hostLabel(h.id) : ""} · ${STATUS_LABEL[w.status] || ""} · ${shortPath(w.cwd)}` }))),
     { label: S.hostId === "local" ? "Shell" : `SSH · ${S.host}`, k: `${S.login}@${S.host}`, run: () => go(hp("shell")) },
     ...S.hosts.filter((h) => h.id !== S.hostId).map((h) => ({ label: `Host: ${h.label}`, k: `${h.username}@${h.hostname}`, run: () => go(`#/h/${encodeURIComponent(h.id)}/sessions`) })),
     { label: "Add remote host…", k: "command", run: () => openHostEditor() },
     { label: "New session…", k: "command", run: () => openEditor() },
-    { label: "Sessions", k: "page", run: () => go(hp("sessions")) },
+    { label: "Sessions", k: "page", run: () => go("#/sessions") },
     { label: "Hosts", k: "page", run: () => go("#/hosts") },
     { label: "Team", k: "page", run: () => go("#/team") },
     { label: "Settings", k: "page", run: () => go("#/settings") },
@@ -1042,13 +1182,14 @@ function startEvents() {
   if (es) es.close();
   es = new EventSource(withHost("/api/events"));
   es.addEventListener("windows", (e) => applySnapshot(JSON.parse(e.data)));
-  es.addEventListener("hosts", (e) => { S.hosts = JSON.parse(e.data); renderHosts(); renderHostBanner(); renderHostCards(); });
+  es.addEventListener("hosts", (e) => { S.hosts = JSON.parse(e.data); renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards(); });
   es.addEventListener("message", (e) => addMessage(JSON.parse(e.data)));
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   if (renderAll.pending) { renderAll.pending = false; renderAll(); }
   if (isTermRoute() && !ws) connect();
+  else claimSize();
 });
 
 (async function init() {
@@ -1061,9 +1202,10 @@ document.addEventListener("visibilitychange", () => {
   loadMessages().catch(() => {});
   if (!location.hash) {
     const first = S.windows.find((w) => w.running);
-    location.hash = first ? hp(`term/${encodeURIComponent(first.name)}`) : hp("sessions");
+    location.hash = first ? hp(`term/${encodeURIComponent(first.name)}`) : "#/sessions";
   }
   route();
   startEvents();
   setInterval(() => S.route === "sessions" && !document.hidden && renderCards(), 30000);
+  setInterval(() => S.route === "sessions" && !document.hidden && loadOtherHosts(), 5000);
 })();

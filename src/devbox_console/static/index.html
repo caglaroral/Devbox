@@ -20,12 +20,11 @@
     </div>
     <button class="search" id="openPalette"><span>⌕ Search or run…</span><kbd>Ctrl K</kbd></button>
     <nav>
-      <a href="#/sessions" data-nav="sessions"><span class="ico">▦</span>Sessions<span class="count" id="sessionCount">0</span></a>
       <a href="#/hosts" data-nav="hosts"><span class="ico">⇄</span>Hosts<span class="count" id="hostCount">0</span></a>
+      <a href="#/sessions" data-nav="sessions"><span class="ico">▦</span>Sessions<span class="count" id="sessionCount">0</span></a>
       <a href="#/team" data-nav="team"><span class="ico">☺</span>Team<span class="count hidden" id="unread">0</span></a>
       <a href="#/settings" data-nav="settings"><span class="ico">⚙</span>Settings</a>
     </nav>
-    <ul id="shellItem" class="winlist"><li><span class="ico">$</span><span class="nm">Shell</span></li></ul>
     <div class="section-title"><span>Hosts &amp; sessions</span>
       <span><button class="icon-btn" id="newSessionBtn" title="New session on the selected host">＋</button><button class="icon-btn" id="newHostBtn" title="Add remote host">⇄＋</button></span></div>
     <ul id="hostList" class="winlist tree"></ul>
@@ -51,14 +50,16 @@
         </div>
         <div class="head-actions">
           <button class="btn" id="copyBtn" title="Copy selection (Ctrl+Shift+C)">Copy</button>
-          <button class="btn" id="pasteBtn" title="Paste (Ctrl+Shift+V)">Paste</button>
+          <button class="btn" id="pasteBtn" title="Paste (Ctrl+V)">Paste</button>
+          <button class="btn" id="attachBtn" title="Send an image (or paste / drop one on the terminal)">📎 Image</button>
           <button class="btn" id="textBtn" title="Open the screen as text (select/copy)">Text</button>
           <button class="btn" id="fontMinus" title="Smaller font">A−</button>
           <button class="btn" id="fontPlus" title="Larger font">A+</button>
         </div>
         <button class="btn" id="manageBtn" title="Manage session">⋯</button>
       </header>
-      <div id="termWrap"><div id="term"></div><div id="termOverlay" class="hidden"></div></div>
+      <div id="termWrap"><div id="term"></div><div id="termOverlay" class="hidden"></div><div id="dropHint">Drop the image to send it to this session</div></div>
+      <input type="file" id="attachInput" accept="image/png,image/jpeg,image/gif,image/webp,image/*" multiple hidden>
       <div id="keybar">
         <button data-key="esc">Esc</button>
         <button data-key="tab">Tab</button>
@@ -74,6 +75,7 @@
         <button data-key="pgdn">PgDn</button>
         <button data-action="select">Select</button>
         <button data-action="paste">Paste</button>
+        <button data-action="attach" title="Send an image">📎</button>
         <button data-action="compose">✎ Type</button>
         <button data-action="manage">⋯</button>
       </div>
@@ -83,7 +85,7 @@
     <section id="view-sessions" class="view">
       <header class="page-head">
         <button class="icon-btn only-mobile" data-menu aria-label="Menu">☰</button>
-        <h1>Sessions <span class="muted h1-host" id="vaultHost"></span></h1>
+        <h1>Sessions</h1>
         <input id="sessFilter" class="filter" type="search" placeholder="Search: name, folder, provider…" autocomplete="off">
         <div class="grow hide-mobile"></div>
         <button class="btn primary" id="newSessionBtn2">＋ New<span class="hide-mobile"> session</span></button>
@@ -96,9 +98,8 @@
         <button class="btn" id="startAllBtn" title="Start all stopped saved sessions">Start all</button>
         <button class="btn" id="refreshBtn" title="Refresh">⟳</button>
       </div>
-      <div id="hostBanner" class="hidden"></div>
       <div id="errorBox" class="flash danger hidden"></div>
-      <div id="cards" class="cards"></div>
+      <div id="cards" class="groups"></div>
     </section>
 
     <!-- hosts: CRUD for machines -->
@@ -201,7 +202,8 @@
       </header>
       <div class="ed-body">
         <div class="ed-group">
-          <div class="ed-label">Genel</div>
+          <div class="ed-label">General</div>
+          <label class="field">Host <select id="fHost"></select></label>
           <label class="field">Display name <input id="fDisplay" placeholder="Alice (Claude)"></label>
           <label class="field">tmux name <input id="fName" required pattern="[A-Za-z0-9_.\-]{1,40}" placeholder="claude-3" spellcheck="false" autocapitalize="none"></label>
           <label class="field">Provider / label <input id="fProvider" placeholder="Anthropic" list="providerList"></label>
