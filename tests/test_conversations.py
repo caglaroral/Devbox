@@ -126,3 +126,34 @@ def test_remote_conversations(console):
     assert (console.remote_home / ".claude/projects").exists()
     r = console.ok("GET", "/api/sessions/rc/conversations?host=gpu-box")
     assert r["current"] == cid and [c["id"] for c in r["conversations"]] == [cid]
+
+
+def test_claude_in_local_bin_is_found(console):
+    """Claude Code's installer puts claude in ~/.local/bin, which a login PATH often lacks (root on Debian):
+    sessions and the host probe must still find it."""
+    import shutil
+    console.ok("POST", "/api/hosts", {"label": "GPU Box", "hostname": "fakehost", "username": "dev", "password": "secret"})
+    lb = console.remote_home / ".local" / "bin"
+    lb.mkdir(parents=True)
+    shutil.copy(console.claude, lb / "claude")
+    (console.remote_home / "lp").mkdir()
+    console.ok("POST", "/api/sessions?host=gpu-box", {"name": "plain", "cwd": "~/lp", "command": "claude"})
+    cid, text = ran_id(console, "plain", host="gpu-box")
+    assert f"--session-id {cid}" in text
+    info = console.ok("POST", "/api/hosts/gpu-box/test")
+    assert info.get("claude"), f"probe finds ~/.local/bin/claude: {info}"
+
+
+def test_failing_command_stays_visible(console):
+    """A command that fails at once (e.g. "claude: command not found") must leave a dead window with its
+    error, not vanish (it used to take the window, and as the only one the tmux server, with it)."""
+    proj = str(console.work / "proj-a")
+    console.ok("POST", "/api/sessions", {"name": "broken", "cwd": proj, "command": "sh -c 'echo no-such-thing; exit 127'"})
+    deadline = time.time() + 10
+    while True:
+        w = console.window("broken")
+        if w["status"] == "dead" or time.time() > deadline:
+            break
+        time.sleep(0.3)
+    assert w["running"] and w["status"] == "dead"
+    assert "no-such-thing" in console.capture("broken", needle="no-such-thing")

@@ -240,9 +240,16 @@ def mask(v: str) -> str:
     return "•" * 8 + v[-4:] if len(v) > 8 else "•" * len(v)
 
 
+# Claude Code's installer puts `claude` in ~/.local/bin, which many profiles leave out of PATH (Debian's root
+# .profile, for one): put it in front for session commands and the host probe.
+LOCAL_BIN = 'PATH="$HOME/.local/bin:$PATH"; '
+
+
 def login_cmd(cmd: str) -> str:
-    """Run the session command through a login shell so PATH (e.g. ~/.local/bin/claude) is right."""
-    return f'exec "${{SHELL:-/bin/bash}}" -lc {shlex.quote(cmd)}'
+    """Run the session command through a login shell so PATH (e.g. ~/.local/bin/claude) is right.
+    The PATH line is POSIX shell syntax, so fish gets the command as it is."""
+    plain, posix = shlex.quote(cmd), shlex.quote(LOCAL_BIN + cmd)
+    return f'case "$SHELL" in *fish) exec "$SHELL" -lc {plain};; *) exec "${{SHELL:-/bin/bash}}" -lc {posix};; esac'
 
 
 def classify(text: str, cmd: str, changed: bool) -> str:
@@ -650,10 +657,13 @@ class Box:
             args = ["new-session", "-d", "-s", SESSION, "-x", "200", "-y", "50", *fmt]
         if cmd:
             args.append(login_cmd(cmd))
-        wid = (await self.tmux(*args, check=True)).strip()
-        if WID_RE.fullmatch(wid) and keep:
-            # keep the window when claude exits: status becomes "dead" and the page offers Restart
-            await self.tmux("set-option", "-w", "-t", wid, "remain-on-exit", "on")
+        if keep:
+            # keep the window when claude exits: status becomes "dead" and the page offers Restart. Set in the
+            # same tmux call: a command that fails at once (e.g. "claude: command not found") would otherwise
+            # take the window, and with the last one the whole tmux server, away before a second call.
+            args += [";", "set-option", "-w", "-t", f"={SESSION}:{name}", "remain-on-exit", "on"]
+        out = (await self.tmux(*args, check=True)).strip().splitlines()
+        wid = out[0] if out else ""
         await self.apply_env()
         return wid
 
@@ -1272,7 +1282,7 @@ async def _probe(box: Box) -> dict:
     rc, out = await box.sh(
         'echo "os=$(uname -sm)"; echo "host=$(hostname)"; '
         'echo "tmux=$(tmux -V 2>/dev/null)"; '
-        'echo "claude=$("${SHELL:-/bin/sh}" -lc "claude --version" 2>/dev/null | head -1)"')
+        'echo "claude=$("${SHELL:-/bin/sh}" -lc \'PATH="$HOME/.local/bin:$PATH"; claude --version\' 2>/dev/null | head -1)"')
     info = dict(ln.split("=", 1) for ln in out.splitlines() if "=" in ln)
     return {"ok": rc == 0, **info}
 

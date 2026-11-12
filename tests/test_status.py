@@ -47,4 +47,10 @@ def test_only_tail_of_screen_counts():
 def test_mask_and_login_cmd():
     assert mask("sk-ant-1234567890") == "••••••••7890"
     assert mask("abc") == "•••"
-    assert login_cmd("claude --continue") == 'exec "${SHELL:-/bin/bash}" -lc \'claude --continue\''
+    # runs the command through the login shell, with ~/.local/bin (Claude Code's install dir) first in PATH
+    import os, subprocess, tempfile
+    with tempfile.TemporaryDirectory() as home:
+        env = {"HOME": home, "SHELL": "/bin/sh", "PATH": "/usr/bin:/bin"}
+        out = subprocess.run(["sh", "-c", login_cmd("echo \"$PATH\"; echo 'it''s quoted'")], env=env,
+                             capture_output=True, text=True).stdout.splitlines()
+        assert out[0].startswith(f"{home}/.local/bin:") and out[1] == "its quoted"
