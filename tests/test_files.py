@@ -104,3 +104,4 @@ def test_claude_gets_the_files_hint(console):
     console.ok("POST", "/api/sessions", {"name": "fh", "cwd": str(console.work / "proj-a"), "command": console.claude})
     text = console.capture("fh", needle="FAKECLAUDE")
     assert "--append-system-prompt" in text, "claude is told that printed paths open in the Files panel"
+    assert "inline=1" in text, "claude runs its inline renderer: the conversation flows into the scrollback"

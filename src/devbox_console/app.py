@@ -73,6 +73,7 @@ NODENAME = os.uname().nodename
 HOST = os.environ.get("DEVBOX_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DEVBOX_PORT", "7700"))
 SESSION = os.environ.get("DEVBOX_TMUX_SESSION", "main")
+HISTORY_LIMIT = 50000  # lines of tmux history per new window (refills the browser buffer on reconnect)
 POLL = float(os.environ.get("DEVBOX_POLL", "4"))  # seconds; drives the green "working" indicator
 PAM_SERVICE = os.environ.get("DEVBOX_PAM_SERVICE", "login")
 ALLOWED = {u.strip() for u in os.environ.get("DEVBOX_USERS", "").split(",") if u.strip()}
@@ -402,6 +403,9 @@ class Box:
         # windows a browser scrolled into tmux copy-mode (touch scrolling). Copy-mode belongs to the pane, so it
         # also freezes every other device's view and swallows typing: the next input from anywhere leaves it.
         self.scrolled: dict[str, str] = {}  # window id -> the browser view that scrolled it
+        self.size_owner: dict[str, str] = {}  # window id -> buffer view whose device sizes it
+        self.manual_size: set[str] = set()  # windows the buffer terminal sized (window-size manual)
+        self.paste_mode: dict[str, bool] = {}  # pane id -> bracketed paste on (seen in its output)
 
     @property
     def remote(self) -> bool:
@@ -660,6 +664,8 @@ class Box:
         fmt = ["-P", "-F", "#{window_id}", "-n", name, "-c", cwd, *self.window_env_args(),
                *(a for k, v in (env or {}).items() for a in ("-e", f"{k}={v}"))]
         if await self.has_session():
+            # a long history for new windows: the browser buffer is refilled from it when it reconnects
+            await self.tmux("set-option", "-t", f"={SESSION}", "history-limit", str(HISTORY_LIMIT))
             args = ["new-window", "-d", "-t", f"={SESSION}:", *fmt]
         else:  # first session on this box: create the tmux session with it
             args = ["new-session", "-d", "-s", SESSION, "-x", "200", "-y", "50", *fmt]
@@ -725,7 +731,12 @@ class Box:
             cmd += " --settings " + shlex.quote(CLAUDE_SETTINGS) + " --append-system-prompt " + shlex.quote(CLAUDE_PROMPT)
         s["sessions"][name] = rec
         self.save_sessions(s)
-        return cwd, cmd, {"DEVBOX_SESSION_KEY": rec["key"]}
+        env = {"DEVBOX_SESSION_KEY": rec["key"]}
+        if is_claude_cmd(rec.get("command") or ""):
+            # claude's inline renderer instead of its full-screen one: the conversation flows into the scrollback
+            # (tmux history and the browser's buffer), so it scrolls natively instead of being redrawn line by line
+            env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
+        return cwd, cmd, env
 
     async def start_saved(self, name: str, resume: bool, conv: str | None = None, fork: bool = False) -> str:
         if self.load_sessions()["sessions"].get(name) is None:
@@ -2025,6 +2036,216 @@ else
   echo copy
 fi
 """
+# ---------------------------------------------------------------- buffer terminal (tmux control mode)
+# The browser keeps its own scrollback: instead of a tmux client that redraws the screen (and drops lines that
+# scroll past quickly), a control-mode client (tmux -C) streams the pane's raw output byte for byte, so
+# xterm.js gets what a local terminal would and scrolls its own buffer natively. Input goes in with
+# send-keys -H (exact bytes). On (re)attach the pane's history + screen are replayed from capture-pane.
+
+BUF_SNAP_SH = r"""
+p=$1
+tmux display-message -p -t "$p" '#{pane_id} #{alternate_on} #{cursor_x} #{cursor_y} #{cursor_flag} #{mouse_any_flag}#{mouse_button_flag}#{mouse_standard_flag} #{mouse_sgr_flag} #{keypad_cursor_flag} #{pane_width} #{pane_height} #{pane_current_command}'
+printf '\036'
+tmux capture-pane -p -e -J -t "$p" -S -"$2" -E -1
+printf '\036'
+tmux capture-pane -p -e -t "$p"
+"""
+PASTE_APPS = {"claude", "bash", "zsh", "fish", "node", "python3", "python"}  # use bracketed paste by default
+
+
+def _ctl_unescape(data: bytes) -> bytes:
+    """%output payload: tmux escapes bytes < 32 and the backslash as \\ooo (octal)."""
+    return re.sub(rb"\\([0-7]{3})", lambda m: bytes([int(m.group(1), 8)]), data)
+
+
+async def term_buffer(req, ws, u, b, tsess: str, wid: str, cols: int, rows: int, view: str):
+    lines = max(500, min(int(req.query.get("lines", "10000") or 10000), 100000))
+    ua = req.headers.get("User-Agent", "")
+    device = "mobile" if re.search(r"Mobi|Android|iPhone|iPad", ua) else "desktop"
+    t0 = time.monotonic()
+    st = {"shown": wid, "pane": "", "want": (cols, rows), "size": None}
+
+    async def pane_of(target: str) -> str:
+        out = await b.tmux("display-message", "-p", "-t", target, "#{pane_id}")
+        return out.strip()
+
+    async def send_size(force: bool = False):
+        out = await b.tmux("display-message", "-p", "-t", st["pane"] or st["shown"], "#{pane_width}x#{pane_height}")
+        size = out.strip()
+        if re.fullmatch(r"\d+x\d+", size) and (force or size != st["size"]):
+            st["size"] = size
+            await ws.send_str("size:" + size)
+
+    async def take_size():
+        """This device is in use: the window gets its size (window-size becomes manual for it)."""
+        c, r = st["want"]
+        b.size_owner[st["shown"]] = view
+        b.manual_size.add(st["shown"])
+        await b.tmux("resize-window", "-t", st["shown"], "-x", str(c), "-y", str(r))
+
+    async def replay():
+        """history + screen + cursor + modes, as if this terminal had been there all along"""
+        rc, out = await b.sh(BUF_SNAP_SH, st["pane"], str(lines))
+        parts = out.split("\x1e")
+        if rc or len(parts) < 3:
+            return
+        info = parts[0].split()
+        if len(info) < 10:
+            return
+        pane, alt, cx, cy, cursor, mflags, sgr, keypad, w, h = info[:10]
+        cmd = info[10] if len(info) > 10 else ""
+        hist = parts[1].rstrip("\n").split("\n") if parts[1].strip("\n") else []
+        screen = parts[2].rstrip("\n").split("\n")[: int(h)]
+        screen += [""] * (int(h) - len(screen))
+        seq = ["\x1bc"]                                    # clean terminal (also leaves the alternate screen)
+        if hist:
+            seq.append("\r\n".join(hist) + "\r\n")
+        if alt == "1":
+            seq.append("\x1b[?1049h\x1b[H")
+        seq.append("\r\n".join(screen))
+        seq.append(f"\x1b[{int(cy) + 1};{int(cx) + 1}H")
+        modes = []
+        if mflags[0] == "1": modes.append(1003)
+        elif mflags[1] == "1": modes.append(1002)
+        elif mflags[2] == "1": modes.append(1000)
+        if modes and sgr == "1": modes.append(1006)
+        if keypad == "1": modes.append(1)
+        if b.paste_mode.get(pane, cmd.rsplit("/", 1)[-1] in PASTE_APPS): modes.append(2004)
+        seq += [f"\x1b[?{m}h" for m in modes]
+        if cursor == "0":
+            seq.append("\x1b[?25l")
+        await ws.send_bytes("".join(seq).encode())
+
+    async def show(target: str):
+        st["shown"] = target
+        st["pane"] = await pane_of(target)
+        await send_size(force=True)
+        await replay()
+
+    argv = ["tmux", "-C", "new-session", "-t", f"={tsess}", "-s", view,
+            ";", "set-option", "-t", view, "destroy-unattached", "on", ";", "set-option", "-t", view, "status", "off"]
+    if WID_RE.fullmatch(wid):
+        argv += [";", "select-window", "-t", f"{view}:{wid}"]
+    cmd, kw = b.wrap(argv)
+    proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.DEVNULL, limit=8 * 1024 * 1024, **kw)
+    lock = asyncio.Lock()
+
+    async def ctl(line: str):
+        async with lock:
+            proc.stdin.write(line.encode() + b"\n")
+            await proc.stdin.drain()
+
+    async def keys(data: bytes):
+        for i in range(0, len(data), 2048):  # exact bytes, also UTF-8 and escape sequences
+            await ctl(f"send-keys -t {st['pane']} -H " + " ".join(f"{c:02x}" for c in data[i:i + 2048]))
+
+    u.log.write("term.open", host=b.id, target=wid or "-", view=view, device=device, ip=req.remote,
+                size=f"{cols}x{rows}", mode="buffer")
+    if not WID_RE.fullmatch(wid):
+        st["shown"] = (await b.tmux("display-message", "-p", "-t", f"={tsess}:", "#{window_id}")).strip()
+    await take_size()  # a device that opens the window gets it, like a tmux client attaching
+    await show(st["shown"])
+
+    out_q: asyncio.Queue = asyncio.Queue()
+
+    async def reader():
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                if line.startswith(b"%output "):
+                    _, pane, data = (line.rstrip(b"\n").split(b" ", 2) + [b""])[:3]
+                    if pane.decode() == st["pane"]:
+                        raw = _ctl_unescape(data)
+                        if b"\x1b[?2004" in raw:  # remember the program's bracketed-paste mode for re-attach
+                            for m in re.finditer(rb"\x1b\[\?2004([hl])", raw):
+                                b.paste_mode[st["pane"]] = m.group(1) == b"h"
+                        out_q.put_nowait(raw)
+                elif line.startswith(b"%layout-change ") or line.startswith(b"%window-pane-changed "):
+                    out_q.put_nowait(None)  # size/pane may have changed
+                elif line.startswith(b"%exit"):
+                    break
+        finally:
+            out_q.put_nowait(b"")
+
+    async def pump():
+        while True:
+            data = await out_q.get()
+            if data is None:
+                await send_size()
+                continue
+            if data == b"":
+                break
+            while not out_q.empty() and len(data) < 256 * 1024:  # coalesce bursts
+                nxt = out_q.get_nowait()
+                if not nxt:
+                    out_q.put_nowait(nxt)
+                    break
+                data += nxt
+            await ws.send_bytes(data)
+        await ws.close()
+
+    reader_task, pump_task = asyncio.create_task(reader()), asyncio.create_task(pump())
+    try:
+        async for msg in ws:
+            if msg.type != WSMsgType.TEXT:
+                if msg.type == WSMsgType.BINARY:
+                    await keys(msg.data)
+                continue
+            try:
+                m = json.loads(msg.data)
+            except ValueError:
+                continue
+            t = m.get("t")
+            if t == "in":
+                await keys(str(m.get("d", "")).encode())
+            elif t == "bin":
+                await keys(base64.b64decode(m.get("d", "")))
+            elif t == "resize":
+                st["want"] = (max(20, min(int(m["c"]), 500)), max(5, min(int(m["r"]), 300)))
+                if b.size_owner.get(st["shown"]) == view:
+                    await take_size()
+            elif t == "claim":
+                if "c" in m:
+                    st["want"] = (max(20, min(int(m["c"]), 500)), max(5, min(int(m["r"]), 300)))
+                if b.size_owner.get(st["shown"]) != view or st["size"] != "%dx%d" % st["want"]:
+                    await take_size()
+            elif t == "select" and WID_RE.fullmatch(str(m.get("w", ""))):
+                await ctl(f"select-window -t {view}:{m['w']}")
+                st["shown"] = m["w"]
+                await take_size()
+                await show(m["w"])
+            elif t == "scroll":
+                # only full-screen programs (no browser scrollback): wheel events to the program
+                n = int(m.get("n", 0) or 0) or int(m.get("page", 0) or 0) * 10
+                if n:
+                    await keys((b"\x1b[<64;10;5M" if n > 0 else b"\x1b[<65;10;5M") * min(abs(n), 60))
+            elif t == "ping":
+                await ws.send_str("pong")
+    finally:
+        TERM_SOCKETS.discard(ws)
+        ended = "restart" if SHUTTING_DOWN else "process" if pump_task.done() else "browser"
+        u.log.write("term.close", host=b.id, target=wid or "-", view=view, device=device, by=ended,
+                    ws_code=ws.close_code, secs=round(time.monotonic() - t0), mode="buffer")
+        if b.size_owner.get(st["shown"]) == view:
+            b.size_owner.pop(st["shown"], None)
+        reader_task.cancel()
+        pump_task.cancel()
+        try:
+            proc.stdin.write(b"detach\n")
+            await asyncio.wait_for(proc.stdin.drain(), 2)
+            await asyncio.wait_for(proc.wait(), 3)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+        try:
+            await b.run(["tmux", "kill-session", "-t", f"={view}"])
+        except Exception:  # noqa: BLE001
+            pass
+    return ws
+
+
 TERM_SOCKETS: set = set()
 SHUTTING_DOWN = False
 
@@ -2070,6 +2291,8 @@ async def ws_term(req):
                      ";", "set-option", "-gwq", "fill-character", " "]
             if WID_RE.fullmatch(wid):
                 targs += [";", "select-window", "-t", f"{view}:{wid}"]
+            if req.query.get("mode") == "buffer":
+                return await term_buffer(req, ws, u, b, tsess, wid, cols, rows, view)
             if b.via_ssh:
                 # remote shells see TERM from ssh; force a sane one for tmux
                 argv, kw = b.wrap(["env", "TERM=xterm-256color", *targs], tty=True)
@@ -2165,6 +2388,9 @@ async def ws_term(req):
                     os.write(master, base64.b64decode(m.get("d", "")))
                 elif t == "claim":  # this device is in use: take the window size (focus-in makes it tmux's "latest")
                     await leave_scroll(others_only=True)
+                    if shown in b.manual_size:  # sized by a buffer terminal: back to automatic sizing
+                        b.manual_size.discard(shown)
+                        await b.tmux("set-option", "-wu", "-t", shown, "window-size")
                     os.write(master, b"\x1b[I")
                 elif t == "ping":  # the browser checks that the socket is still alive (after sleep/resume)
                     await ws.send_str("pong")

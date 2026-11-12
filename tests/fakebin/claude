@@ -53,7 +53,8 @@ def say(cid, text):
 
 hooks(cid, source)
 say(cid, f"hello from {cid[:8]}")
-print(f"FAKECLAUDE id={cid} args={' '.join(a for a in args if not a.startswith('{'))}", flush=True)
+print(f"FAKECLAUDE id={cid} inline={os.environ.get('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', '')} "
+      f"args={' '.join(a for a in args if not a.startswith('{'))}", flush=True)
 for line in sys.stdin:
     if line.strip() == "/clear":
         cid = str(uuid.uuid4())

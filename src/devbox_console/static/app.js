@@ -130,7 +130,10 @@ term.attachCustomKeyEventHandler((e) => {
   return true;
 });
 
-let restarting = 0; // when the console said it is restarting (close code 1012)
+let restarting = 0;
+let wsBuf = false, paneSize = null; // buffer terminal: the pane's size (the browser terminal follows it)
+const isBuf = () => wsBuf && wsKind === "tmux";
+const wantDims = () => fit.proposeDimensions() || { cols: term.cols, rows: term.rows }; // when the console said it is restarting (close code 1012)
 let ws = null, wsKind = null, wsSess = null, wsWanted = false, wsRetry = 0, ctrlArmed = false;
 function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function overlay(msg, html = false) {
@@ -151,7 +154,8 @@ function claimSize(gap = 500) {
   if (wsKind !== "tmux" || !ws || ws.readyState !== 1 || document.hidden) return;
   const now = Date.now(); if (now - lastClaim < (typeof gap === "number" ? gap : 500)) return;
   lastClaim = now;
-  wsSend({ t: "claim" }); // not typing: it must not end this device's own scrolling
+  const d = wantDims();
+  wsSend({ t: "claim", c: d.cols, r: d.rows }); // not typing: it must not end this device's own scrolling
   $("#sizeBar")?.classList.add("hidden"); // the next snapshot shows the new size
 }
 window.addEventListener("focus", () => claimSize());
@@ -160,11 +164,13 @@ window.addEventListener("focus", () => claimSize());
 // and let a click/tap take the size back.
 function updateSizeBar() {
   const bar = $("#sizeBar"), w = S.route === "term" ? cur() : null;
-  const off = w?.running && w.width && ws && wsKind === "tmux" && (w.width !== term.cols || Math.abs(w.height - term.rows) > 1);
+  let have = w && { cols: w.width, rows: w.height }, mine = { cols: term.cols, rows: term.rows };
+  if (isBuf()) { have = paneSize; mine = wantDims(); }
+  const off = w?.running && have?.cols && ws && wsKind === "tmux" && (have.cols !== mine.cols || Math.abs(have.rows - mine.rows) > 1);
   bar.classList.toggle("hidden", !off);
   if (!off) return;
-  const smaller = w.width < term.cols;
-  bar.innerHTML = `Sized for ${smaller ? "a smaller" : "a bigger"} screen (<b>${w.width}×${w.height}</b>) — ${isTouch() ? "tap" : "click"} to fit here`;
+  const smaller = have.cols < mine.cols;
+  bar.innerHTML = `Sized for ${smaller ? "a smaller" : "a bigger"} screen (<b>${have.cols}×${have.rows}</b>) — ${isTouch() ? "tap" : "click"} to fit here`;
 }
 $("#sizeBar").addEventListener("click", (e) => { e.stopPropagation(); claimSize(0); $("#sizeBar").classList.add("hidden"); });
 $("#termWrap").addEventListener("pointerdown", () => claimSize(), true);
@@ -197,8 +203,11 @@ function connect() {
   if (!shell && (!w || !w.running)) { closeWs(); showStopped(w); return; }
   wsWanted = true;
   fit.fit();
+  wsBuf = !shell && bufferMode(); paneSize = null;
+  term.options.scrollback = wsBuf ? bufferLines() : 2000;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const q = new URLSearchParams({ cols: term.cols, rows: term.rows, ...(shell ? { shell: "1" } : { window: w.id }) });
+  const q = new URLSearchParams({ cols: term.cols, rows: term.rows, ...(shell ? { shell: "1" } : { window: w.id }),
+                                  ...(wsBuf ? { mode: "buffer", lines: bufferLines() } : {}) });
   wsKind = shell ? "shell" : "tmux";
   wsSess = shell ? null : w.tmux_session;
   overlay("Connecting…");
@@ -206,7 +215,12 @@ function connect() {
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { if (restarting) { restarting = 0; checkVersion(); } wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
   ws.onmessage = (ev) => {
-    if (typeof ev.data === "string") { if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; } return; }
+    if (typeof ev.data === "string") {
+      if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; }
+      const m = /^size:(\d+)x(\d+)$/.exec(ev.data);
+      if (m) { paneSize = { cols: +m[1], rows: +m[2] }; term.resize(paneSize.cols, paneSize.rows); updateSizeBar(); }
+      return;
+    }
     term.write(new Uint8Array(ev.data));
   };
   ws.onclose = (ev) => {
@@ -289,7 +303,7 @@ new ResizeObserver(() => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (!isTermRoute()) return;
-    fit.fit(); wsSend({ t: "resize", c: term.cols, r: term.rows });
+    sendSize();
     updateSizeBar();
   }, 80);
 }).observe($("#termWrap"));
@@ -298,6 +312,12 @@ function setFont(n) {
   fontSize = Math.max(8, Math.min(24, n));
   localStorage.setItem(FONT_KEY, fontSize);
   term.options.fontSize = fontSize;
+  sendSize();
+}
+// classic: the browser terminal fits its box and tmux follows; buffer: ask for that size, the server answers
+// with the pane's size ("size:") and the browser terminal takes exactly that (raw output is laid out for it)
+function sendSize() {
+  if (isBuf()) { const d = wantDims(); wsSend({ t: "resize", c: d.cols, r: d.rows }); return; }
   fit.fit(); wsSend({ t: "resize", c: term.cols, r: term.rows });
 }
 $("#fontMinus").onclick = () => setFont(fontSize - 1);
@@ -306,20 +326,22 @@ $("#copyBtn").onclick = () => (term.hasSelection() ? copyText(term.getSelection(
 $("#pasteBtn").onclick = pasteFromClipboard;
 $("#textBtn").onclick = () => openScreenText();
 
-// touch scroll speed: lines scrolled per line of finger movement (Settings → This device; per device)
-const GAIN_KEY = "devbox.scrollGain", GAIN_DEFAULT = 1.8;
-let gainCache = null;
-function scrollGain() {
-  if (gainCache == null) { try { gainCache = +localStorage.getItem(GAIN_KEY) || GAIN_DEFAULT; } catch { gainCache = GAIN_DEFAULT; } }
-  return gainCache;
+// terminal of this device (Settings → This device): "buffer" keeps the scrollback in the browser (native scrolling),
+// "classic" lets a tmux client draw the screen. Plus how many lines the buffer keeps.
+const MODE_KEY = "devbox.termMode", LINES_KEY = "devbox.bufferLines", LINES_DEFAULT = 10000;
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const bufferMode = () => store.get(MODE_KEY) !== "classic";
+const bufferLines = () => Math.max(1000, Math.min(100000, +store.get(LINES_KEY) || LINES_DEFAULT));
+const scrollGain = () => (isBuf() ? 1 : 1.8); // classic: claude scrolls 1 line per wheel event, so a bit more
+function showTermSettings() {
+  $("#bufLines").value = bufferLines(); $("#bufLinesVal").textContent = bufferLines().toLocaleString();
+  $("#classicTerm").checked = !bufferMode();
 }
-function showGain() { $("#scrollGain").value = scrollGain(); $("#scrollGainVal").textContent = scrollGain().toFixed(1); }
-$("#scrollGain").addEventListener("input", (e) => {
-  gainCache = Math.max(0.5, Math.min(5, +e.target.value || GAIN_DEFAULT));
-  try { localStorage.setItem(GAIN_KEY, gainCache); } catch {}
-  showGain();
-});
-showGain();
+function reconnectTerm() { if (isTermRoute()) { closeWs(); requestAnimationFrame(connect); } }
+$("#bufLines").addEventListener("input", (e) => { store.set(LINES_KEY, +e.target.value); showTermSettings(); });
+$("#bufLines").addEventListener("change", reconnectTerm);
+$("#classicTerm").addEventListener("change", (e) => { store.set(MODE_KEY, e.target.checked ? "classic" : "buffer"); showTermSettings(); reconnectTerm(); });
+showTermSettings();
 
 /* touch: swipe = scroll history (tmux copy-mode), pinch = font size, long-press = selection view, tap = keyboard */
 (() => {
@@ -330,7 +352,8 @@ showGain();
     const unit = lineH() / scrollGain(), n = Math.trunc(acc / unit);
     if (!n) return;
     moved = true; acc -= n * unit;
-    if (S.route === "shell") term.scrollLines(-n); else wsSend({ t: "scroll", n });
+    if (S.route === "shell" || (isBuf() && term.buffer.active.type === "normal")) term.scrollLines(-n); // local, instant
+    else wsSend({ t: "scroll", n });
   };
   const stopGlide = () => { cancelAnimationFrame(glideRaf); glideRaf = 0; };
   function glide() { // momentum after a flick, like native scrolling
@@ -436,7 +459,7 @@ $("#attachBtn").onclick = pickFiles;
    and anything else scrolls tmux's history (otherwise the wheel turned into arrow keys or did nothing) */
 let wheelAcc = 0;
 term.attachCustomWheelEventHandler?.((e) => {
-  if (S.route !== "term" || wsKind !== "tmux" || e.ctrlKey) return true;
+  if (S.route !== "term" || wsKind !== "tmux" || e.ctrlKey || isBuf()) return true; // buffer: xterm scrolls / reports the wheel itself
   wheelAcc += e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * term.rows : e.deltaY / (fontSize * 1.2);
   const n = Math.trunc(wheelAcc);
   if (n) { wheelAcc -= n; wsSend({ t: "scroll", n: -Math.max(-30, Math.min(30, n)) }); }
@@ -452,8 +475,9 @@ $("#keybar").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
   if (b.dataset.mod === "ctrl") return setCtrl(!ctrlArmed);
   const k = b.dataset.key, a = b.dataset.action;
-  if (k === "pgup") return S.route === "shell" ? term.scrollPages(-1) : wsSend({ t: "scroll", page: 1 });
-  if (k === "pgdn") return S.route === "shell" ? term.scrollPages(1) : wsSend({ t: "scroll", page: -1 });
+  const local = S.route === "shell" || (isBuf() && term.buffer.active.type === "normal");
+  if (k === "pgup") return local ? term.scrollPages(-1) : wsSend({ t: "scroll", page: 1 });
+  if (k === "pgdn") return local ? term.scrollPages(1) : wsSend({ t: "scroll", page: -1 });
   if (k) return wsSend({ t: "in", d: KEYS[k] });
   if (a === "select") return term.hasSelection() ? copyText(term.getSelection()) : openScreenText();
   if (a === "paste") return pasteFromClipboard();
@@ -481,11 +505,11 @@ function xtermBufferText(maxLines) {
   return out.join("\n").replace(/\s+$/, "") + "\n";
 }
 async function openScreenText(more = false) {
-  textLines = more ? Math.min(textLines * 4, 5000) : 300;
+  textLines = more ? Math.min(textLines * 4, isBuf() ? bufferLines() : 5000) : 300;
   try {
     const w = cur();
     let text;
-    if (S.route === "shell") text = xtermBufferText(textLines);
+    if (S.route === "shell" || isBuf()) text = xtermBufferText(textLines); // the browser has the whole buffer
     else if (w?.running) text = (await api(`/api/windows/${encodeURIComponent(w.id)}/capture?lines=${textLines}`)).text;
     else return;
     openTextDialog(text);
@@ -844,7 +868,7 @@ function hostDot(h) {
 }
 function hostSessions(h) {
   // the selected host has fresher data (its own snapshot stream); others come from the host summaries
-  if (h.id === S.hostId) return S.windows.map((w) => ({ name: w.name, display: w.display, status: w.status, running: w.running, cwd: w.cwd, hidden: w.hidden, shell: w.shell }));
+  if (h.id === S.hostId) return S.windows.map((w) => ({ name: w.name, display: w.display, status: w.status, running: w.running, cwd: w.cwd, hidden: w.hidden, shell: w.shell, external: w.external }));
   return h.sessions || [];
 }
 function renderHosts() {
@@ -862,6 +886,7 @@ function renderHosts() {
     <li class="sess s-${x.status} ${x.running ? "" : "off"} ${S.route === "term" && h.id === S.hostId && x.name === S.current ? "active" : ""}"
         data-host="${esc(h.id)}" data-name="${esc(x.name)}" title="${esc(STATUS_LABEL[x.status] || x.status)}${x.cwd ? " · " + esc(shortPath(x.cwd)) : ""}">
       <span class="dot"></span>${x.shell ? '<span class="sh">$</span>' : ""}<span class="nm">${esc(x.display)}</span>
+      ${x.external ? "" : `<button class="icon-btn tfiles" data-tfiles title="Files of this session">${ICON_FOLDER}</button>`}
       <button class="icon-btn tclose" data-tclose title="Close / hide…">✕</button>
     </li>`).join("") : `<li class="empty-sess">${h.error ? "cannot connect" : "no sessions"}</li>`)
       + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} hidden (running)</li>` : "");
@@ -870,6 +895,12 @@ function renderHosts() {
 $("#hostList").addEventListener("click", async (e) => {
   const ed = e.target.closest("[data-hedit]");
   if (ed) { e.stopPropagation(); return openHostEditor(ed.dataset.hedit); }
+  const fb = e.target.closest("[data-tfiles]");
+  if (fb) { // folder on a tree item: the session's Files panel
+    e.stopPropagation();
+    const li = fb.closest("[data-name]");
+    return openFiles(li.dataset.name, li.dataset.host);
+  }
   const x = e.target.closest("[data-tclose]");
   if (x) { // ✕ on a tree item: the same "close or only hide?" dialog as on the cards
     e.stopPropagation();

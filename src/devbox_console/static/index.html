@@ -186,9 +186,10 @@
         <div class="box">
           <div class="box-head">This device</div>
           <div class="box-body">
-            <label class="field">Touch scroll speed — <b id="scrollGainVal"></b> lines per line of finger movement
-              <input id="scrollGain" type="range" min="0.5" max="5" step="0.1"></label>
-            <p class="muted small">Stored on this device only (phone and desktop keep their own value). Takes effect at once.</p>
+            <label class="field">Terminal buffer — <b id="bufLinesVal"></b> lines kept in the browser (scroll back that far, natively)
+              <input id="bufLines" type="range" min="1000" max="100000" step="1000"></label>
+            <label class="check"><input type="checkbox" id="classicTerm"> Classic terminal: tmux draws the screen (no browser buffer; use it if something looks wrong)</label>
+            <p class="muted small">Stored on this device only (phone and desktop keep their own values). The terminal reconnects when you change them.</p>
           </div>
         </div>
         <div class="box">
