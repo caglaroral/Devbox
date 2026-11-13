@@ -356,10 +356,10 @@ $("#bufLines").addEventListener("change", reconnectTerm);
 $("#classicTerm").addEventListener("change", (e) => { store.set(MODE_KEY, e.target.checked ? "classic" : "buffer"); showTermSettings(); reconnectTerm(); });
 showTermSettings();
 
-/* touch: swipe = scroll history (tmux copy-mode), pinch = font size, long-press = selection view, tap = keyboard */
+/* touch: swipe = scroll, pinch = font size, short tap = keyboard */
 (() => {
   const el = $("#termWrap");
-  let y0 = null, acc = 0, pinch0 = null, f0 = fontSize, moved = false, lp = null, longPressed = false;
+  let y0 = null, acc = 0, pinch0 = null, f0 = fontSize, moved = false, tDown = 0;
   let vel = 0, t0 = 0, glideRaf = 0;
   const scrollBy = () => { // whole lines out of the accumulated finger movement
     const unit = lineH() / scrollGain(), n = Math.trunc(acc / unit);
@@ -382,7 +382,6 @@ showTermSettings();
     };
     glideRaf = requestAnimationFrame(step);
   }
-  const cancelLP = () => { clearTimeout(lp); lp = null; };
   const lineH = () => fontSize * 1.2;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   el.addEventListener("touchstart", (e) => {
@@ -390,10 +389,8 @@ showTermSettings();
     moved = false; stopGlide(); vel = 0; t0 = performance.now();
     if (e.touches.length === 2) { pinch0 = dist(e.touches); f0 = fontSize; y0 = null; }
     else if (e.touches.length === 1) {
-      y0 = e.touches[0].clientY; acc = 0; longPressed = false;
-      lp = setTimeout(() => { longPressed = true; navigator.vibrate?.(15); openScreenText(); }, 550);
+      y0 = e.touches[0].clientY; acc = 0; tDown = performance.now();
     }
-    if (e.touches.length !== 1) cancelLP();
   }, { passive: true });
   el.addEventListener("touchmove", (e) => {
     if (pinch0 && e.touches.length === 2) {
@@ -406,17 +403,18 @@ showTermSettings();
     if (now > t0) vel = 0.8 * ((y - y0) / (now - t0)) + 0.2 * vel; // px/ms, smoothed: the flick speed
     t0 = now;
     acc += y - y0; y0 = y;
-    if (Math.abs(acc) > 8) cancelLP();
     scrollBy();
     e.preventDefault();
   }, { passive: false, capture: true });
   el.addEventListener("touchend", (e) => {
     if (e.target.closest(".stopped-box, #jumpBottom")) return; // their own taps: no scroll, no keyboard
-    cancelLP();
+    const pinched = !!pinch0;
     if (pinch0) { pinch0 = null; setFont(fontSize); }
     y0 = null;
     if (moved && Math.abs(vel) > 0.25 && performance.now() - t0 < 80) glide(); // flick: keep going, slowing down
-    if (!moved && !longPressed) term.focus(); // a tap opens the keyboard
+    // a short tap opens the keyboard; holding without moving (a scroll that did not start) does nothing.
+    // No long-press action: it got in the way of scrolling (screen text is in the ⋯ menu / key bar).
+    if (!moved && !pinched && performance.now() - tDown < 450) term.focus();
   }, { passive: true });
   el.addEventListener("contextmenu", (e) => { if (isTouch()) e.preventDefault(); });
 })();

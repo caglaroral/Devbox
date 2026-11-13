@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.16
+- Phone: no long-press action on the terminal (it opened the screen text and got in the way of scrolling);
+  only a short tap opens the keyboard.
+
 ## v0.7.15
 - Desktop terminal header without Copy / Paste / Text (Ctrl+C / Ctrl+V; screen text is in the ⋯ menu).
   Phones keep Copy / Paste in the ⋯ menu and key bar.

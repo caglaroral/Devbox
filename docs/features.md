@@ -110,7 +110,8 @@ you should look at on their own line, so they can be clicked.
 
 - Tap the terminal for the keyboard; the key bar has Esc, Tab, Ctrl, arrows, Enter, ^C, ⇧Tab, PgUp/PgDn,
   Select, Paste, 📎, ✎ Type, ⋯.
-- Swipe to scroll, flick for momentum, pinch to change the font size, long-press for selectable screen text.
+- Swipe to scroll, flick for momentum, pinch to change the font size; a short tap opens the keyboard (holding does
+  nothing). Selectable screen text: **Select** on the key bar or ⋯ → *Screen text*.
 - The phone keyboard's autocorrect does not cause erase-and-retype at spaces (the console sends only the real
   difference). **✎ Type** opens a normal text box (autocorrect, dictation) and sends it at once.
 
