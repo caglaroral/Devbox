@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.14
+- **Ctrl+C copies** the selected text (without a selection it is still the interrupt); Ctrl+V pastes.
+
 ## v0.7.13
 - Terminal ANSI colours = GNOME Terminal's default palette (mc and other programs look like they do locally).
 

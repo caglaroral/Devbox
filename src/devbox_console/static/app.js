@@ -126,13 +126,17 @@ term.parser.registerOscHandler(52, (data) => {
   return true;
 });
 
-// Ctrl+Shift+C (and Cmd+C on mac) copies. Ctrl+V / Ctrl+Shift+V / Cmd+V are left to the browser: its native
-// paste event works on plain http too and also carries images (see the paste handler below).
+// Ctrl+C copies when text is selected (the selection is then cleared, so the next Ctrl+C is ^C again); without a
+// selection it is ^C as usual. Ctrl+Shift+C / Cmd+C copy too. Ctrl+V / Ctrl+Shift+V / Cmd+V are left to the
+// browser: its native paste event works on plain http too and also carries images (see the paste handler below).
 term.attachCustomKeyEventHandler((e) => {
   if (e.type !== "keydown") return true;
   const k = e.key.toLowerCase();
-  if ((e.ctrlKey && e.shiftKey && k === "c") || (e.metaKey && k === "c" && term.hasSelection())) {
-    copyText(term.getSelection()); e.preventDefault(); return false;
+  if (k === "c" && !e.altKey && ((e.ctrlKey && e.shiftKey) || ((e.ctrlKey || e.metaKey) && term.hasSelection()))) {
+    const text = term.getSelection();
+    e.preventDefault();
+    copyText(text).then(() => { term.clearSelection(); if (!isTouch()) term.focus(); });
+    return false;
   }
   if (k === "v" && ((e.ctrlKey && !e.altKey) || e.metaKey)) return false; // no ^V; the browser fires "paste"
   return true;

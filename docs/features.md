@@ -99,6 +99,9 @@ you should look at on their own line, so they can be clicked.
 - One program draws for one size: when two devices show the same session, the one you used last sets the size;
   the other shows *"Sized for a smaller/bigger screen — click/tap to fit here"*. Touching, clicking or typing on
   a device takes the size.
+- **Copy / paste with the keyboard**: select text with the mouse, **Ctrl+C** copies it (without a selection
+  Ctrl+C is the normal interrupt); **Ctrl+V** pastes. Programs that use the mouse (mc, claude) need
+  **Shift**+drag to select.
 - Header: **Copy**, **Paste**, **📎 Attach**, **Files**, **Text** (screen text for selecting), **A−/A+**, **⋯**.
   On a phone these are in the **⋯** menu.
 - **⋯** menu: Send Ctrl‑C, Edit…, Conversations…, Files, Screen text, New conversation, Resume,
