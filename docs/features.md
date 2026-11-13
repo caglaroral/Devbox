@@ -102,8 +102,7 @@ you should look at on their own line, so they can be clicked.
 - **Copy / paste with the keyboard**: select text with the mouse, **Ctrl+C** copies it (without a selection
   Ctrl+C is the normal interrupt); **Ctrl+V** pastes. Programs that use the mouse (mc, claude) need
   **Shift**+drag to select.
-- Header: **Copy**, **Paste**, **📎 Attach**, **Files**, **Text** (screen text for selecting), **A−/A+**, **⋯**.
-  On a phone these are in the **⋯** menu.
+- Header: **📎 Attach**, **Files**, **A−/A+**, **⋯**. On a phone these (plus Copy / Paste) are in the **⋯** menu.
 - **⋯** menu: Send Ctrl‑C, Edit…, Conversations…, Files, Screen text, New conversation, Resume,
   Close…, and a field to send a prompt or slash command.
 

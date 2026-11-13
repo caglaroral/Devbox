@@ -336,9 +336,6 @@ function sendSize() {
 }
 $("#fontMinus").onclick = () => setFont(fontSize - 1);
 $("#fontPlus").onclick = () => setFont(fontSize + 1);
-$("#copyBtn").onclick = () => (term.hasSelection() ? copyText(term.getSelection()) : openScreenText());
-$("#pasteBtn").onclick = pasteFromClipboard;
-$("#textBtn").onclick = () => openScreenText();
 
 // terminal of this device (Settings → This device): "buffer" keeps the scrollback in the browser (native scrolling),
 // "classic" lets a tmux client draw the screen. Plus how many lines the buffer keeps.

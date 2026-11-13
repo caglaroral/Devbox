@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.15
+- Desktop terminal header without Copy / Paste / Text (Ctrl+C / Ctrl+V; screen text is in the ⋯ menu).
+  Phones keep Copy / Paste in the ⋯ menu and key bar.
+
 ## v0.7.14
 - **Ctrl+C copies** the selected text (without a selection it is still the interrupt); Ctrl+V pastes.
 
