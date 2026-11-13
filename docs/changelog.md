@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.7.13
+- Terminal ANSI colours = GNOME Terminal's default palette (mc and other programs look like they do locally).
+
 ## v0.7.12
 - Fix: the host editor opened on *Manual*, so saving a host with a stored password or key (even just a
   new label) deleted that credential. It now opens on the current method, and switching to Manual asks first.

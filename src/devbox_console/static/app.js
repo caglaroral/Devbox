@@ -93,11 +93,12 @@ const term = new Terminal({
   fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace',
   fontSize, cursorBlink: true, allowProposedApi: true, scrollback: 2000,
   macOptionIsMeta: true, rightClickSelectsWord: false,
-  theme: { // GitHub dark
+  theme: { // page colours (GitHub dark); the 16 ANSI colours are GNOME Terminal's default palette, so programs
+           // like mc look the same as in a local GNOME terminal
     background: "#0d1117", foreground: "#e6edf3", cursor: "#2f81f7", cursorAccent: "#0d1117",
     selectionBackground: "rgba(56,139,253,0.4)",
-    black: "#484f58", red: "#ff7b72", green: "#3fb950", yellow: "#d29922", blue: "#58a6ff", magenta: "#bc8cff", cyan: "#39c5cf", white: "#b1bac4",
-    brightBlack: "#6e7681", brightRed: "#ffa198", brightGreen: "#56d364", brightYellow: "#e3b341", brightBlue: "#79c0ff", brightMagenta: "#d2a8ff", brightCyan: "#56d4dd", brightWhite: "#ffffff",
+    black: "#171421", red: "#c01c28", green: "#26a269", yellow: "#a2734c", blue: "#12488b", magenta: "#a347ba", cyan: "#2aa1b3", white: "#d0cfcc",
+    brightBlack: "#5e5c64", brightRed: "#f66151", brightGreen: "#33da7a", brightYellow: "#e9ad0c", brightBlue: "#2a7bde", brightMagenta: "#c061cb", brightCyan: "#33c7de", brightWhite: "#ffffff",
   },
 });
 const fit = new FitAddon.FitAddon();
