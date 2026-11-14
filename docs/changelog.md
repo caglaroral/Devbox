@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.8.5
+- **Edit for shells** (✎ on the card, ⋯ → Edit…): a name, and the folder (restarts the shell there).
+
 ## v0.8.4
 - Fix: Enter in the password dialog pressed Cancel (the first button), so the shell / session never opened.
 

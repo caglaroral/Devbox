@@ -749,7 +749,8 @@ function openManage() {
   $("#mgSend").value = "";
   $$("#manageDlg [data-mg]").forEach((b) => {
     const needsRun = ["interrupt", "send", "text", "copy", "paste", "attach"].includes(b.dataset.mg);
-    b.disabled = (needsRun && !w.running) || ((w.external || w.shell) && ["edit", "restart", "resume", "convs"].includes(b.dataset.mg))
+    b.disabled = (needsRun && !w.running) || (w.external && ["edit", "restart", "resume", "convs"].includes(b.dataset.mg))
+      || (w.shell && ["restart", "resume", "convs"].includes(b.dataset.mg))
       || (b.dataset.mg === "convs" && !w.saved);
   });
   $("#manageDlg").showModal();
@@ -762,7 +763,7 @@ $("#manageDlg").addEventListener("click", async (e) => {
   try {
     if (a === "close") dlg.close();
     if (a === "interrupt") { await winAction({ action: "interrupt" }); toast("Ctrl‑C sent"); }
-    if (a === "edit") { dlg.close(); openEditor(w.name, S.hostId); }
+    if (a === "edit") { dlg.close(); w.shell ? openShellEditor(w.name, S.hostId) : openEditor(w.name, S.hostId); }
     if (a === "restart" || a === "resume") {
       if (w.running && !confirm(a === "restart" ? "Restart claude with a new conversation in the same folder?" : "Restart claude in this session's conversation?")) return;
       dlg.close(); await restartSession(w.name, a === "resume");
@@ -1032,6 +1033,31 @@ $("#hostCards").addEventListener("click", async (e) => {
 });
 
 /* "ask" hosts: the password opens the connection and is not kept */
+/* shells: a name (tmux window option) and the folder (restarts the shell there) */
+function openShellEditor(name, host = S.hostId) {
+  const w = findWin(name, host); if (!w) return;
+  const dlg = $("#shellDlg"); dlg.dataset.name = name; dlg.dataset.host = host;
+  $("#shName").value = w.label || ""; $("#shName").placeholder = `Shell ${name.slice(6)}`;
+  $("#shCwd").value = w.path || w.cwd || "";
+  dlg.showModal(); if (!isTouch()) $("#shName").focus();
+}
+$("#shCancel").onclick = () => $("#shellDlg").close();
+$("#shellForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const dlg = $("#shellDlg"), name = dlg.dataset.name, host = dlg.dataset.host, w = findWin(name, host);
+  const body = { display: $("#shName").value.trim() };
+  const cwd = $("#shCwd").value.trim();
+  if (cwd && cwd !== (w?.path || w?.cwd)) {
+    const busy = w && !/^(-?(ba|z|fi|da|k|tc)?sh)$/.test(w.cmd || "");
+    if (busy && !confirm(`"${w.cmd}" is running in this shell. Restart the shell in ${cwd}? It will be closed.`)) return;
+    body.cwd = cwd;
+  }
+  try {
+    applySnapshot(await api(`/api/shells/${encodeURIComponent(name)}`, { method: "PATCH", body, host }));
+    dlg.close(); toast("Saved");
+  } catch (err) { toast(err.message); }
+});
+
 let unlockAfter = null;
 $("#unlockCancel").onclick = () => { unlockAfter = null; $("#unlockPw").value = ""; $("#unlockDlg").close(); };
 function unlockHost(hid, after = null) {
@@ -1293,7 +1319,7 @@ function cardHTML(w, hid) {
         <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.shell ? " · shell, not saved" : w.saved || w.external ? "" : " · unsaved"}</span></div>
         <button class="icon-btn" data-act="files" title="Files of this session">${ICON_FOLDER}</button>
         ${w.saved && !w.shell ? `<button class="icon-btn" data-act="convs" title="Claude conversations">${ICON_HISTORY}</button>` : ""}
-        ${w.external || w.shell ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
+        ${w.external ? "" : `<button class="icon-btn" data-act="edit" title="${w.shell ? "Rename / folder" : "Edit"}">✎</button>`}
         <button class="icon-btn" data-act="close" title="Close / hide">✕</button>
       </div>
       <div class="card-path" title="${esc(w.cwd)}">▭ ${esc(shortPath(w.cwd) || "—")}</div>
@@ -1381,7 +1407,7 @@ $("#cards").addEventListener("click", async (e) => {
   const card = e.target.closest(".card"); if (!card) return;
   const act = e.target.closest("[data-act]")?.dataset.act;
   const name = card.dataset.name, host = card.dataset.host, w = findWin(name, host);
-  if (act === "edit") return openEditor(name, host);
+  if (act === "edit") return findWin(name, host)?.shell ? openShellEditor(name, host) : openEditor(name, host);
   if (act === "close") return closeAsk(name, host);
   if (act === "unhide") return hideSession(name, false, host);
   if (act === "resume") return startSession(name, true, host);

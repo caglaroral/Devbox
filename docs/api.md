@@ -32,6 +32,7 @@ non-GET requests are refused (Origin check). Endpoints that act on one machine t
 | GET | `/api/sessions/{name}/conversations` | `{current, running, cwd, claude, conversations: [{id, mtime, size, title, prompt}]}` |
 | POST | `/api/sessions/{name}/conversations/{cid}` | `{action: "resume" \| "fork" \| "delete"}` |
 | POST | `/api/shells` | `{cwd?}` — new tmux login shell `shell-N` (not saved) |
+| PATCH | `/api/shells/{name}` | `{display?, cwd?}` — name a shell (empty = default) / restart it in a folder |
 | GET | `/api/windows/{wid}/capture` | `?lines=` — screen text |
 | POST | `/api/windows/{wid}/action` | `{action: "interrupt" \| "respawn" \| "send", …}` |
 | GET | `/api/dirs` | folder suggestions |

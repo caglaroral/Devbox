@@ -360,6 +360,16 @@
   </div>
 </dialog>
 
+<dialog id="shellDlg">
+  <form method="dialog" id="shellForm">
+    <h2>Edit shell</h2>
+    <label class="field">Name <input id="shName" maxlength="60" placeholder="Shell 1" spellcheck="false"></label>
+    <label class="field">Folder <input id="shCwd" spellcheck="false" autocapitalize="none" placeholder="~/project"></label>
+    <p class="muted small">Changing the folder restarts the shell there (what runs in it now is closed).</p>
+    <div class="row-end"><button type="button" class="btn" id="shCancel">Cancel</button><button class="btn primary" value="ok">Save</button></div>
+  </form>
+</dialog>
+
 <dialog id="unlockDlg">
   <form method="dialog" id="unlockForm">
     <h2 id="unlockTitle">Enter password</h2>

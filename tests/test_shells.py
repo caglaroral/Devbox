@@ -58,3 +58,21 @@ def test_remote_shell(console):
     assert "shell-1" not in wins(console.ok("GET", "/api/sessions?host=local"))
     hosts = {h["id"]: h for h in console.ok("GET", "/api/hosts")["hosts"]}
     assert any(x["name"] == "shell-1" and x["shell"] for x in hosts["gpu-box"]["sessions"]), "shown in the sidebar tree"
+
+
+def test_shell_rename_and_folder(console):
+    w = wins(console.ok("POST", "/api/shells", {}))["shell-1"]
+    r = console.ok("PATCH", "/api/shells/shell-1", {"display": "build logs"})
+    assert wins(r)["shell-1"]["display"] == "build logs"
+    proj = console.work / "proj-a"
+    proj.mkdir(exist_ok=True)
+    r = console.ok("PATCH", "/api/shells/shell-1", {"cwd": str(proj)})
+    w2 = wins(r)["shell-1"]
+    assert w2["id"] == w["id"] and w2["display"] == "build logs", "same window, name kept"
+    console.ok("POST", f"/api/windows/{w['id']}/action", {"action": "send", "text": "pwd", "enter": True})
+    assert str(proj) in console.capture("shell-1", needle=str(proj))
+    r = console.ok("PATCH", "/api/shells/shell-1", {"display": ""})
+    assert wins(r)["shell-1"]["display"] == "Shell 1", "empty name = default"
+    assert console.call("PATCH", "/api/shells/shell-1", {"cwd": "/no/such/dir"})[0] == 400
+    console.ok("POST", "/api/sessions", {"name": "s1", "cwd": str(proj), "command": "cat"})
+    assert console.call("PATCH", "/api/shells/s1", {"display": "x"})[0] == 400, "sessions are edited elsewhere"

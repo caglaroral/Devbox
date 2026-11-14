@@ -229,7 +229,7 @@ SEP = "<~dvb~>"  # tmux escapes control chars in -F output, so use a printable s
 WIN_FMT = SEP.join([
     "#{window_id}", "#{window_index}", "#{window_name}", "#{pane_current_path}",
     "#{pane_current_command}", "#{pane_title}", "#{window_activity}", "#{pane_dead}", "#{pane_start_path}",
-    "#{session_name}", "#{session_group}", "#{window_width}", "#{window_height}",
+    "#{session_name}", "#{session_group}", "#{window_width}", "#{window_height}", "#{@devbox_label}",
 ])
 EXT_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,40}~[A-Za-z0-9_.\-@]{1,40}$")  # "<tmux session>~<window>"
 SPINNER_RE = re.compile(r"^\s*[✻✶✳✢✽✺·*◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\S+…", re.M)
@@ -609,6 +609,7 @@ class Box:
         for r in rows:
             wid, idx, wname, path, cmd, title, act, dead, start_path, tsess, _grp = r[:11]
             width, height = (int(x) if x.isdigit() else 0 for x in (r[11:13] + ["", ""])[:2])
+            label = r[13].strip() if len(r) > 13 else ""  # name given to a shell (tmux window option)
             external = tsess != SESSION
             if external:
                 wpart = wname if re.fullmatch(r"[A-Za-z0-9_.\-@]{1,40}", wname) else f"@{wid[1:]}"
@@ -632,7 +633,7 @@ class Box:
                 "activity": int(act or 0), "status": status, "last_change": a["last_change"],
                 "preview": lines[-8:], "start_path": start_path,
                 "tmux_session": tsess, "window_name": wname, "external": external,
-                "width": width, "height": height,
+                "width": width, "height": height, "label": label,
             })
         self.windows = sorted(wins, key=lambda w: (w["external"], w["tmux_session"], w["index"]))
         # keep memory flat: forget windows that are gone (saved sessions keep their activity)
@@ -658,7 +659,7 @@ class Box:
             items.append({
                 **w, "running": True, "saved": w["name"] in recs, "hidden": w["name"] in hidden, "shell": shell,
                 "display": rec.get("display") or (f"{w['window_name']} ({w['tmux_session']})" if w["external"] else
-                                                  f"Shell {w['name'][6:]}" if shell else w["name"]),
+                                                  (w.get("label") or f"Shell {w['name'][6:]}") if shell else w["name"]),
                 "provider": rec.get("provider", ""),
                 "cwd": rec.get("cwd") or w["start_path"], "command": rec.get("command", ""),
                 "autostart": bool(rec.get("autostart")),
@@ -1747,6 +1748,32 @@ async def api_create_shell(req):
     return web.json_response({**b.snapshot(), "created": wid, "name": name})
 
 
+async def api_update_shell(req):
+    """Rename a shell (`display`, empty = default) and/or restart it in another folder (`cwd`)."""
+    b, name, body = B(req), req.match_info["name"], await req.json()
+    if not SHELL_NAME_RE.fullmatch(name) or name in b.load_sessions()["sessions"]:
+        raise web.HTTPBadRequest(text="not a shell")
+    w = next((x for x in b.windows if x["name"] == name and not x["external"]), None)
+    if not w:
+        raise web.HTTPNotFound(text="shell not found")
+    if "display" in body:
+        label = re.sub(r"[\x00-\x1f]", "", str(body.get("display") or "")).strip()[:60]
+        if label:
+            await b.tmux("set-option", "-w", "-t", w["id"], "@devbox_label", label, check=True)
+        else:
+            await b.tmux("set-option", "-wu", "-t", w["id"], "@devbox_label")
+    cwd = str(body.get("cwd") or "").strip()
+    if cwd:
+        d = await b.resolve_dir(cwd)
+        if not d:
+            raise web.HTTPBadRequest(text="folder not found")
+        if d != w["start_path"] or d != w["path"]:
+            await b.tmux("respawn-pane", "-k", "-t", w["id"], "-c", d, check=True)  # a fresh shell in that folder
+            b.user.log.write("shell.folder", host=b.id, name=name, cwd=d)
+    await b.poll_once()
+    return web.json_response(b.snapshot())
+
+
 async def api_update_session(req):
     """Edit a session; also adopts a live unsaved window (saves it). Renaming renames the tmux window."""
     b, name, body = B(req), name_of(req), await req.json()
@@ -2739,6 +2766,7 @@ def make_app() -> web.Application:
     r.add_get("/api/sessions", api_windows)
     r.add_post("/api/sessions", api_create_session)
     r.add_post("/api/shells", api_create_shell)
+    r.add_patch("/api/shells/{name}", api_update_shell)
     r.add_patch("/api/sessions/{name}", api_update_session)
     r.add_delete("/api/sessions/{name}", api_delete_session)
     r.add_post("/api/sessions/{name}/start", api_start_session)
