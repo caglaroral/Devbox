@@ -315,8 +315,10 @@
           </div>
           <div data-pane="password">
             <label class="field">Password <input id="hPassword" type="password" autocomplete="new-password" placeholder="used only once"></label>
-            <label class="check"><input type="checkbox" id="hStorePw"> Store the password in Vault and use it for every connection</label>
-            <p class="muted small" id="hPwHint">Default: the password is not stored; it is used once to add the console's SSH key to the remote <code>authorized_keys</code>. Tick "store" for hosts that don't allow key login.</p>
+            <label class="check"><input type="radio" name="hPwMode" id="hPwOnce" checked> <span><b>Don't save the password</b> — use it once to add the console's SSH key to <code>~/.ssh/authorized_keys</code> on the host; later connections use the key</span></label>
+            <label class="check"><input type="radio" name="hPwMode" id="hPwAsk"> <span><b>Ask for the password at every connection</b> — no key on the host, nothing saved; when the connection has to be opened again (console update, network drop, reboot) the host shows 🔒 and waits for the password</span></label>
+            <label class="check hidden" id="hRemoveKeyRow"><input type="checkbox" id="hRemoveKey" checked> <span>Also remove the console's key from <code>authorized_keys</code> on the host</span></label>
+            <label class="check"><input type="radio" name="hPwMode" id="hStorePw"> <span>Save the password in Vault and use it for every connection (only for hosts that don't allow key login)</span></label>
           </div>
           <div data-pane="key" class="hidden">
             <label class="field">Private key (OpenSSH) <textarea id="hKey" rows="5" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
@@ -356,6 +358,15 @@
     <button class="btn" id="textPasteSel">Type selection into terminal</button>
     <button class="btn" id="textMore">More history</button>
   </div>
+</dialog>
+
+<dialog id="unlockDlg">
+  <form method="dialog" id="unlockForm">
+    <h2 id="unlockTitle">Enter password</h2>
+    <p class="muted small" id="unlockInfo"></p>
+    <label class="field">Password <input id="unlockPw" type="password" autocomplete="off"></label>
+    <div class="row-end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok" id="unlockOk">Connect</button></div>
+  </form>
 </dialog>
 
 <dialog id="pasteDlg">

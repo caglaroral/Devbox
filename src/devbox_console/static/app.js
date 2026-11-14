@@ -958,7 +958,7 @@ function renderHostCards() {
     const all = hostSessions(h), i = h.info || {};
     const busy = all.filter((x) => x.status === "working").length, running = all.filter((x) => x.running).length;
     const addr = h.remote ? `${h.username}@${h.hostname}${h.port && h.port !== 22 ? ":" + h.port : ""}` : `${h.username || S.user || ""}@${h.hostname || "localhost"}`;
-    const AUTH = { "custom-key": "pasted private key", "password": "password (Vault)", "console-key": "console key", "local": "local" };
+    const AUTH = { "custom-key": "pasted private key", "password": "password (Vault)", "console-key": "console key", "ask": "password each connection", "local": "local" };
     const miss = h.remote ? [!i.tmux && "tmux", !i.claude && "claude"].filter(Boolean) : [];
     return `<div class="card host-card" data-hid="${esc(h.id)}">
       <div class="card-head">
@@ -974,6 +974,7 @@ function renderHostCards() {
         ${h.remote ? `<span class="pill">${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
         <span class="grow"></span>
         ${h.remote ? `<button class="btn danger" data-ha="delete">Delete</button><button class="btn" data-ha="test">Test</button>` : ""}
+        ${h.locked ? `<button class="btn primary" data-ha="unlock" title="Enter the password to connect">🔒 Unlock</button>` : h.auth === "ask" ? `<button class="btn" data-ha="lock" title="Close the connection; the password is asked again">Lock</button>` : ""}
         <button class="btn" data-ha="shell" title="Login shell on this host in tmux — not saved; come back to it any time, exit closes it">Shell</button>
         <button class="btn primary" data-ha="sessions">Sessions</button>
       </div>
@@ -985,6 +986,12 @@ $("#hostCards").addEventListener("click", async (e) => {
   const id = card.dataset.hid, a = e.target.closest("[data-ha]")?.dataset.ha || "sessions";
   const enc = encodeURIComponent(id);
   if (a === "edit") return openHostEditor(id);
+  if (a === "unlock") return unlockHost(id);
+  if (a === "lock") {
+    try { S.hosts = (await api(`/api/hosts/${enc}/lock`, { method: "POST" })).hosts; toast("Locked"); renderHosts(); renderHostCards(); }
+    catch (err) { toast(err.message); }
+    return;
+  }
   if (a === "shell") return openShell(id);
   if (a === "sessions") return go(`#/h/${enc}/sessions`);
   if (a === "test") {
@@ -1007,7 +1014,34 @@ $("#hostCards").addEventListener("click", async (e) => {
   }
 });
 
+/* "ask" hosts: the password opens the connection and is not kept */
+function unlockHost(hid) {
+  const h = S.hosts.find((x) => x.id === hid);
+  $("#unlockTitle").textContent = `🔒 ${h?.label || hid}`;
+  $("#unlockInfo").textContent = `Password for ${h ? `${h.username}@${h.hostname}` : hid}. It opens the connection and is not saved; you will be asked again when the connection has to be reopened.`;
+  $("#unlockPw").value = "";
+  const dlg = $("#unlockDlg"); dlg.dataset.hid = hid; dlg.showModal(); $("#unlockPw").focus();
+}
+$("#unlockForm").addEventListener("submit", async (e) => {
+  const dlg = $("#unlockDlg");
+  if (e.submitter?.value !== "ok") return;
+  e.preventDefault();
+  const pw = $("#unlockPw").value; if (!pw) return;
+  const btn = $("#unlockOk"); btn.disabled = true; btn.textContent = "Connecting…";
+  try {
+    S.hosts = (await api(`/api/hosts/${encodeURIComponent(dlg.dataset.hid)}/unlock`, { method: "POST", body: JSON.stringify({ password: pw }) })).hosts;
+    $("#unlockPw").value = ""; dlg.close(); toast("Connected");
+    renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards();
+  } catch (err) { toast(err.message); $("#unlockPw").select(); }
+  finally { btn.disabled = false; btn.textContent = "Connect"; }
+});
+
 let hEditing = null, hAuth = "password";
+function syncPwMode() {
+  const h = hEditing && S.hosts.find((x) => x.id === hEditing);
+  $("#hRemoveKeyRow").classList.toggle("hidden", !($("#hPwAsk").checked && h && h.auth === "console-key"));
+}
+$$('[name="hPwMode"]').forEach((r) => r.addEventListener("change", syncPwMode));
 function setAuthPane(a) {
   hAuth = a;
   $$("#hAuth button").forEach((b) => b.classList.toggle("on", b.dataset.a === a));
@@ -1021,11 +1055,12 @@ async function openHostEditor(hid = null) {
   $("#hTitle").textContent = h ? "Edit host" : "Add remote host";
   $("#hLabel").value = h?.label || ""; $("#hHostname").value = h?.hostname || "";
   $("#hPort").value = h?.port || 22; $("#hUser").value = h?.username || "";
-  $("#hPassword").value = ""; $("#hKey").value = ""; $("#hStorePw").checked = h?.auth === "password";
+  $("#hPassword").value = ""; $("#hKey").value = ""; $("#hStorePw").checked = h?.auth === "password"; $("#hPwAsk").checked = h?.auth === "ask";
+  $("#hPwOnce").checked = !["password", "ask"].includes(h?.auth); syncPwMode();
   // open on the host's current method: an untouched Password / Private key pane sends nothing (keeps it as it is);
   // "Manual" (drop stored credentials) only applies when it is the current method or explicitly chosen
-  setAuthPane(!h ? "password" : h.auth === "password" ? "password" : h.auth === "custom-key" ? "key" : "manual");
-  const AUTH_LABEL = { "custom-key": "pasted private key", "password": "password stored in Vault", "console-key": "console key" };
+  setAuthPane(!h ? "password" : ["password", "ask"].includes(h.auth) ? "password" : h.auth === "custom-key" ? "key" : "manual");
+  const AUTH_LABEL = { "custom-key": "pasted private key", "password": "password stored in Vault", "console-key": "console key", "ask": "password asked at every connection" };
   $("#hAuthNow").textContent = h ? `Currently: ${AUTH_LABEL[h.auth] || h.auth}. Enter a password or a new key to change it.` : "";
   $("#hDelete").classList.toggle("hidden", !h);
   $("#hTest").classList.toggle("hidden", !h);
@@ -1053,6 +1088,15 @@ $("#hostForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const body = { label: $("#hLabel").value.trim(), hostname: $("#hHostname").value.trim(),
                  port: +$("#hPort").value || 22, username: $("#hUser").value.trim() };
+  const curH = hEditing && S.hosts.find((x) => x.id === hEditing);
+  if (hAuth === "password" && !$("#hPassword").value && ["password", "ask"].includes(curH?.auth) && $("#hPwOnce").checked)
+    return toast("Enter the password once to switch this host to the console key");
+  if (hAuth === "password" && $("#hPwAsk").checked) {
+    if (!$("#hPassword").value && !(curH?.auth === "ask")) return toast("Enter the password to connect");
+    body.auth = "ask";
+    if ($("#hPassword").value) body.password = $("#hPassword").value;
+    if (curH && curH.auth !== "ask" && !$("#hRemoveKeyRow").classList.contains("hidden") && $("#hRemoveKey").checked) body.remove_key = true;
+  } else
   if (hAuth === "password" && $("#hPassword").value) { body.password = $("#hPassword").value; body.store_password = $("#hStorePw").checked; }
   if (hAuth === "manual") {
     const cur = hEditing && S.hosts.find((x) => x.id === hEditing);
@@ -1256,6 +1300,7 @@ function groupHead(h, wins) {
       ${err ? `<span class="danger-text small">${esc(err)}</span>` : ""}
       ${miss.length ? `<span class="small">⚠ Missing: <b>${miss.join(", ")}</b></span>` : ""}
       <span class="grow"></span>
+      ${h.locked ? `<button class="btn primary" data-ga="unlock" title="Enter the password to connect">🔒 Unlock</button>` : ""}
       <button class="btn" data-ga="shell" title="Login shell on this host in tmux — not saved; come back to it any time, exit closes it">Shell</button>
       <button class="btn" data-ga="new">＋ New<span class="hide-mobile"> session</span></button>
     </div>`;
@@ -1304,6 +1349,7 @@ $("#cards").addEventListener("click", async (e) => {
     const hid = ga.closest("[data-host]").dataset.host;
     if (ga.dataset.ga === "new") return openEditor(null, hid);
     if (ga.dataset.ga === "shell") return openShell(hid);
+    if (ga.dataset.ga === "unlock") return unlockHost(hid);
     return;
   }
   const card = e.target.closest(".card"); if (!card) return;

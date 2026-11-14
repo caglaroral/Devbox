@@ -10,8 +10,16 @@ corner shows the console version and build commit, e.g. `devbox v0.7.6 · 3f2c1a
 ## Hosts
 
 - **local** is the machine the console runs on (in the Docker install it is reached over SSH like any other).
-- Remote hosts are added on the Hosts page (password once to install the console's key, a stored password,
-  a pasted private key, or manual key setup).
+- Remote hosts are added on the Hosts page. Authentication:
+  - **Password, not saved** (default): used once to add the console's SSH key to the host's
+    `~/.ssh/authorized_keys`; later connections use the key. The password is kept nowhere.
+  - **Ask for the password at every connection**: no key on the host and nothing saved anywhere. The password
+    opens one SSH connection that all of the console's work for that host shares; when it has to be opened
+    again (console update/restart, network drop, host reboot) the host shows **🔒 Unlock** (host card and the
+    Sessions page) and waits for the password. **Lock** closes it on purpose. Switching a key host to this mode
+    can also remove the console's key from the host's `authorized_keys`.
+  - **Password, saved in Vault**: only for hosts that don't allow key login.
+  - **Private key** (pasted, kept in Vault) or **Manual** (you add the console's public key yourself).
 - Each host card shows reachability, OS, tmux and claude versions, and buttons for **Shell**, **Test**,
   **Sessions**, **Edit**, **Delete**.
 

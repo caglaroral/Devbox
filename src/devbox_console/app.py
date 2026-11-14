@@ -171,11 +171,14 @@ RUNTIME = Path(os.environ.get("DEVBOX_RUNTIME") or ("/dev/shm" if os.path.isdir(
 for d in (DATA, DATA / "users", CM_DIR, RUNTIME):
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)
+for _f in CM_DIR.glob("ask-*"):  # masters of "ask" hosts never survive a console restart
+    _f.unlink(missing_ok=True)
 
 STORE = make_store(DATA)
 # prints $DEVBOX_ASKPASS_PW; the secret itself is only in the env. Not on RUNTIME: Docker mounts tmpfs noexec.
 ASKPASS = DATA / "askpass.sh"
-ASKPASS.write_text('#!/bin/sh\nprintf "%s\\n" "$DEVBOX_ASKPASS_PW"\n')
+ASKPASS.write_text('#!/bin/sh\nif [ -n "$DEVBOX_ASKPASS_FILE" ]; then cat "$DEVBOX_ASKPASS_FILE"; rm -f "$DEVBOX_ASKPASS_FILE"; '
+                   'else printf "%s\\n" "$DEVBOX_ASKPASS_PW"; fi\n')
 os.chmod(ASKPASS, 0o700)
 
 
@@ -419,10 +422,16 @@ class Box:
         return self.host.get("label") or self.host.get("hostname")
 
     # ---- command execution
+    @property
+    def ask(self) -> bool:
+        """Password asked at every connection: no key, nothing stored; calls ride on a master opened by unlock."""
+        return bool(self.via_ssh and self.host and self.host.get("ask_password"))
+
     def ssh_base(self, tty: bool = False) -> list[str]:
         h = self.host
-        return ["ssh", *(["-tt"] if tty else ["-T"]),
-                *self.user.ssh_opts(self.user.host_key(self.id), password=bool(self.user.host_password(self.id))),
+        opts = self.user.ask_opts(self.id) if self.ask else \
+            self.user.ssh_opts(self.user.host_key(self.id), password=bool(self.user.host_password(self.id)))
+        return ["ssh", *(["-tt"] if tty else ["-T"]), *opts,
                 "-p", str(h.get("port") or 22), f"{h['username']}@{h['hostname']}"]
 
     def ssh_env(self) -> dict:
@@ -436,6 +445,8 @@ class Box:
     def wrap(self, argv: list[str], tty: bool = False) -> tuple[list[str], dict]:
         """argv to run on this box -> (local argv, spawn kwargs)."""
         if self.via_ssh:
+            if self.ask and not self.user.ask_path(self.id).exists():
+                raise RuntimeError(f"{self.label}: locked — enter the password to connect")
             return [*self.ssh_base(tty), *([shlex.join(argv)] if argv else [])], \
                 {"env": self.ssh_env(), "start_new_session": True}
         return argv, self.user.spawn_kw()
@@ -452,6 +463,9 @@ class Box:
             proc.kill()
             raise RuntimeError(f"{self.label}: timed out")
         if self.via_ssh and proc.returncode == 255:  # ssh itself failed
+            if self.ask and b"Control socket" in err:  # the master is gone (stale socket): locked again
+                self.user.ask_path(self.id).unlink(missing_ok=True)
+                raise RuntimeError(f"{self.label}: locked — enter the password to connect")
             raise RuntimeError(f"{self.label}: SSH connection failed — {err.decode(errors='replace').strip()[-300:]}")
         if check and proc.returncode:
             raise RuntimeError(err.decode(errors="replace").strip() or f"{argv[0]} failed")
@@ -639,7 +653,8 @@ class Box:
                 "sessions": [{"name": w["name"], "display": w["display"], "status": w["status"], "running": w["running"],
                               "hidden": w["hidden"], "external": w["external"], "shell": w["shell"]}
                              for w in self.snapshot()["windows"]],
-                "info": (self.host or {}).get("info", {}), "auth": self.user.host_auth(self.id) if self.via_ssh else "local"}
+                "info": (self.host or {}).get("info", {}), "auth": self.user.host_auth(self.id) if self.via_ssh else "local",
+                "locked": self.ask and not self.user.ask_path(self.id).exists()}
 
     def session_env(self) -> dict:
         return {**self.user.session_env(), "DEVBOX_HOST_ID": self.id}
@@ -933,6 +948,8 @@ class User:
         return self.host_secrets.get(hid, {}).get("password")
 
     def host_auth(self, hid: str) -> str:
+        if any(x["id"] == hid and x.get("ask_password") for x in self.load_hosts()):
+            return "ask"
         sec = self.host_secrets.get(hid, {})
         return "password" if sec.get("password") else "custom-key" if sec.get("private_key") else "console-key"
 
@@ -944,6 +961,70 @@ class User:
         else:
             await STORE.delete(self.sp("hosts", hid))
             self.host_secrets.pop(hid, None)
+
+    # ---- "ask" hosts: the password opens one SSH master connection and is forgotten; every call goes through
+    # that master (ControlMaster=no: never authenticates itself). When it ends (network, reboot, console restart)
+    # the host is locked until the password is entered again.
+    def ask_path(self, hid: str) -> Path:
+        return CM_DIR / f"ask-{self.name}-{hid}"
+
+    def ask_opts(self, hid: str) -> list[str]:
+        return ["-F", "none", "-o", "BatchMode=yes", "-o", "PubkeyAuthentication=no", "-o", "PasswordAuthentication=no",
+                "-o", f"UserKnownHostsFile={self.dir / 'ssh' / 'known_hosts'}", "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "ControlMaster=no", "-o", f"ControlPath={self.ask_path(hid)}", "-o", "LogLevel=ERROR"]
+
+    async def unlock(self, h: dict, password: str) -> None:
+        """Open the master connection for an "ask" host with this password (not kept anywhere)."""
+        path = self.ask_path(h["id"])
+        if path.exists():
+            await self.lock(h)
+        pwf = self.rt / f"pw-{secrets.token_hex(8)}"
+        fd = os.open(pwf, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(password + "\n")
+        env = {**os.environ, "SSH_ASKPASS": str(ASKPASS), "SSH_ASKPASS_REQUIRE": "force",
+               "DISPLAY": os.environ.get("DISPLAY", ":0"), "DEVBOX_ASKPASS_FILE": str(pwf)}
+        env.pop("SSH_AUTH_SOCK", None)
+        err = tempfile.TemporaryFile()
+        try:
+            # -f: ssh authenticates, then the master goes to the background (its output must not be our pipes)
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-M", "-N", "-f", "-F", "none", "-o", "BatchMode=no",
+                "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no",
+                "-o", "NumberOfPasswordPrompts=1",
+                "-o", f"UserKnownHostsFile={self.dir / 'ssh' / 'known_hosts'}", "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+                "-o", f"ControlPath={path}", "-o", "LogLevel=ERROR",
+                "-p", str(h.get("port") or 22), f"{h['username']}@{h['hostname']}",
+                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=err,
+                env=env, start_new_session=True)
+            try:
+                rc = await asyncio.wait_for(proc.wait(), 30)
+            except asyncio.TimeoutError:
+                proc.kill()
+                raise RuntimeError("timed out")
+            err.seek(0)
+            msg = err.read().decode(errors="replace").strip()
+        finally:
+            err.close()
+            pwf.unlink(missing_ok=True)
+        if rc != 0 or not path.exists():
+            if "Permission denied" in msg:
+                msg = "wrong password (or password login is disabled on the server)"
+            raise RuntimeError(msg[-300:] or "could not connect")
+
+    async def lock(self, h: dict) -> None:
+        path = self.ask_path(h["id"])
+        if path.exists():
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-F", "none", "-o", f"ControlPath={path}", "-O", "exit",
+                "-p", str(h.get("port") or 22), f"{h['username']}@{h['hostname']}",
+                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            try:
+                await asyncio.wait_for(proc.wait(), 10)
+            except asyncio.TimeoutError:
+                proc.kill()
+        path.unlink(missing_ok=True)
 
     def ssh_opts(self, key: Path | None = None, password: bool = False) -> list[str]:
         auth = (["-o", "BatchMode=no", "-o", "PreferredAuthentications=password,keyboard-interactive",
@@ -1122,7 +1203,12 @@ async def auth_mw(req: web.Request, handler):
             raise web.HTTPUnauthorized(text="login required")
         raise web.HTTPFound("/login")
     req["user"] = await get_user(name)
-    return await handler(req)
+    try:
+        return await handler(req)
+    except RuntimeError as e:  # a host that cannot be reached (SSH failed, locked, timed out): say so, not "500"
+        if p.startswith("/api/"):
+            raise web.HTTPBadGateway(text=str(e)[:500])
+        raise
 
 
 def U(req) -> User:
@@ -1281,6 +1367,18 @@ async def _apply_host_auth(u: User, hid: str, h: dict, body: dict) -> None:
        nothing                            -> keep what is there (or the manually installed console key)"""
     pk = str(body.get("private_key") or "").strip()
     pw = str(body.get("password") or "")
+    if body.get("auth") == "ask":
+        # nothing stored, no key installed: the password opens one connection (now, if given)
+        if pw:
+            await u.unlock({**h, "id": hid}, pw)  # first: a wrong password changes nothing
+        h["ask_password"] = True
+        await u.set_host_secret(hid, None)
+        if pw and body.get("remove_key"):
+            await _remove_console_key(u, {**h, "id": hid})
+        return
+    if pk or pw or body.get("auth") == "manual":
+        if h.pop("ask_password", None):
+            await u.lock(h)
     if pk:
         if "PRIVATE KEY" not in pk:
             raise web.HTTPBadRequest(text="the private key must be in OpenSSH/PEM format")
@@ -1294,6 +1392,20 @@ async def _apply_host_auth(u: User, hid: str, h: dict, body: dict) -> None:
         await u.set_host_secret(hid, None)  # back to the console key
     elif body.get("auth") == "manual":
         await u.set_host_secret(hid, None)
+
+
+async def _remove_console_key(u: User, h: dict) -> None:
+    """Take the console's public key out of the host's authorized_keys (through the unlocked connection)."""
+    rec = await STORE.get(u.sp("ssh-key"))
+    body = (rec or {}).get("public", "").split()
+    if len(body) < 2:
+        return
+    b = Box(u, h)
+    script = ('f="$HOME/.ssh/authorized_keys"; [ -f "$f" ] && grep -qF "$1" "$f" || exit 0; '
+              't="$f.devbox.$$"; grep -vF "$1" "$f" > "$t"; cat "$t" > "$f"; rm -f "$t"; echo removed')
+    rc, out = await b.sh(script, body[1])
+    if "removed" in out:
+        u.log.write("host.key_removed", host=h["id"])
 
 
 async def _probe(box: Box) -> dict:
@@ -1326,13 +1438,21 @@ async def api_create_host(req):
     while hid == "local" or any(x["id"] == hid for x in hosts):
         hid, n = f"{base}-{n}", n + 1
     h = {"id": hid, **h, "created": time.time()}
+    if body.get("auth") == "ask" and not body.get("password"):
+        raise web.HTTPBadRequest(text="enter the password to connect")
     await u.ensure_key()
-    await _apply_host_auth(u, hid, h, body)
+    try:
+        await _apply_host_auth(u, hid, h, body)
+    except RuntimeError as e:
+        raise web.HTTPBadGateway(text=str(e))
     box = Box(u, h)
     try:
         info = await _probe(box)
     except RuntimeError as e:
         await u.set_host_secret(hid, None)
+        if h.get("ask_password"):
+            await u.lock(h)
+            raise web.HTTPBadGateway(text=str(e))
         raise web.HTTPBadGateway(text=f"{e} — enter a password to install the key, paste a private key, or add the public key manually")
     h["info"] = info
     hosts.append(h)
@@ -1349,9 +1469,16 @@ async def api_update_host(req):
     if not h:
         raise web.HTTPNotFound(text="no such host")
     h.update(_host_fields({**h, **body}))
-    await _apply_host_auth(u, hid, h, body)
+    try:
+        await _apply_host_auth(u, hid, h, body)
+    except RuntimeError as e:
+        raise web.HTTPBadGateway(text=str(e))
     u.save_hosts(hosts)
     u.drop_box(hid)
+    if h.get("ask_password") and not u.ask_path(hid).exists():
+        u.box(hid)
+        u.broadcast_hosts()
+        return web.json_response({"hosts": u.hosts_summary()})
     try:
         h["info"] = await _probe(u.box(hid))
         u.save_hosts(hosts)
@@ -1376,12 +1503,50 @@ async def api_test_host(req):
     return web.json_response(info)
 
 
+async def api_unlock_host(req):
+    """Password for an "ask" host: opens its connection; the password is not kept."""
+    u, hid, body = U(req), req.match_info["hid"], await req.json()
+    h = next((x for x in u.load_hosts() if x["id"] == hid), None)
+    if not h or not h.get("ask_password"):
+        raise web.HTTPBadRequest(text="this host does not ask for a password")
+    try:
+        await u.unlock(h, str(body.get("password") or ""))
+    except RuntimeError as e:
+        u.log.write("host.unlock_failed", host=hid, error=str(e)[:200])
+        raise web.HTTPBadGateway(text=str(e))
+    u.log.write("host.unlock", host=hid)
+    b = u.box(hid)
+    b.wake.set()
+    try:
+        await b.poll_once()
+    except Exception:  # noqa: BLE001
+        pass
+    u.broadcast_hosts()
+    return web.json_response({"hosts": u.hosts_summary()})
+
+
+async def api_lock_host(req):
+    u, hid = U(req), req.match_info["hid"]
+    h = next((x for x in u.load_hosts() if x["id"] == hid), None)
+    if not h or not h.get("ask_password"):
+        raise web.HTTPBadRequest(text="this host does not ask for a password")
+    await u.lock(h)
+    u.log.write("host.lock", host=hid)
+    b = u.box(hid)
+    b.wake.set()
+    u.broadcast_hosts()
+    return web.json_response({"hosts": u.hosts_summary()})
+
+
 async def api_delete_host(req):
     """Forget a host (its tmux sessions keep running there; nothing on the remote is touched)."""
     u, hid = U(req), req.match_info["hid"]
     if hid == "local":
         raise web.HTTPBadRequest(text="this host cannot be deleted")
+    old = next((h for h in u.load_hosts() if h["id"] == hid), None)
     u.save_hosts([h for h in u.load_hosts() if h["id"] != hid])
+    if old:
+        await u.lock(old)
     await u.set_host_secret(hid, None)
     u.drop_box(hid)
     u.broadcast_hosts()
@@ -2485,6 +2650,8 @@ def make_app() -> web.Application:
     r.add_patch("/api/hosts/{hid}", api_update_host)
     r.add_delete("/api/hosts/{hid}", api_delete_host)
     r.add_post("/api/hosts/{hid}/test", api_test_host)
+    r.add_post("/api/hosts/{hid}/unlock", api_unlock_host)
+    r.add_post("/api/hosts/{hid}/lock", api_lock_host)
     r.add_get("/api/ssh-key", api_ssh_key)
     r.add_get("/api/windows", api_windows)
     r.add_get("/api/sessions", api_windows)

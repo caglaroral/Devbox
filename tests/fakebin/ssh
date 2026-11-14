@@ -14,20 +14,28 @@ args = sys.argv[1:]
 opts, i = {}, 0
 while i < len(args):
     a = args[i]
-    if a in ("-F", "-i", "-p"):
+    if a in ("-F", "-i", "-p", "-O"):
         opts[a] = args[i + 1]; i += 2; continue
     if a == "-o":
         k, _, v = args[i + 1].partition("="); opts[k] = v; i += 2; continue
     if a.startswith("-"):
-        i += 1; continue
+        opts[a] = True; i += 1; continue
     break
 dest, cmd = args[i], args[i + 1:]
 user, host = dest.split("@")
 if host != "fakehost":
     sys.stderr.write(f"ssh: connect to host {host} port 22: Connection refused\n"); sys.exit(255)
+cpath = opts.get("ControlPath")
+if opts.get("-O") == "exit":  # close a master: the marker file stands for its socket
+    if cpath and os.path.exists(cpath):
+        os.unlink(cpath)
+    sys.exit(0)
 home = os.environ["FAKE_REMOTE_HOME"]
 os.makedirs(home, exist_ok=True)
-if opts.get("PubkeyAuthentication") == "no":  # password mode
+if opts.get("ControlMaster") == "no" and cpath:  # must go through an existing master
+    if not os.path.exists(cpath):
+        sys.stderr.write(f"Control socket connect({cpath}): No such file or directory\n"); sys.exit(255)
+elif opts.get("PubkeyAuthentication") == "no":  # password mode
     pw = subprocess.run([os.environ["SSH_ASKPASS"]], capture_output=True, text=True).stdout.strip()
     if pw != "secret":
         sys.stderr.write(f"{dest}: Permission denied (publickey,password).\n"); sys.exit(255)
@@ -43,6 +51,9 @@ else:  # key mode
     custom_ok = key.endswith(".key") and os.path.exists(key) and "PRIVATE KEY" in open(key).read()
     if not (pub and pub in ak) and not custom_ok:
         sys.stderr.write(f"{dest}: Permission denied (publickey).\n"); sys.exit(255)
+if opts.get("-M"):  # master: authenticated, "goes to the background"
+    open(cpath, "w").close()
+    sys.exit(0)
 env = {**os.environ, "HOME": home, "TMUX_SOCK": "remote", "SHELL": "/bin/bash"}
 env.pop("TMUX", None)
 os.chdir(home)

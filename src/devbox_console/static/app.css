@@ -516,3 +516,6 @@ dialog.wide[open] { display: flex; }
 /* mobile menu (☰): the icon stretched horizontally (button as before; margin keeps the stretched glyph clear) */
 .icon-btn[data-menu] { transform: scaleX(1.45); margin-left: 4px; margin-right: 4px; }
 .brand .icon-btn[data-menu] { margin-left: auto; }
+/* host editor: password choice (two lines each) */
+#hostEditor [data-pane="password"] .check { display: flex; align-items: flex-start; line-height: 1.4; }
+#hostEditor [data-pane="password"] .check input { margin-top: 3px; flex: none; }

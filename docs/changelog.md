@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.0
+- **Ask for the password at every connection** (new host authentication): no key on the host, nothing saved;
+  the password opens one shared SSH connection, the host shows 🔒 Unlock when it has to be reopened; Lock button;
+  switching a key host can remove the console key from `authorized_keys`.
+- API errors from unreachable hosts are 502 with the reason (not 500).
+
+## v0.7.17 (not deployed separately)
+- Host editor: explicit choice **Don't save the password** (default: used once to install the console key) /
+  **Save the password in Vault**, instead of a single "store" checkbox.
+
 ## v0.7.16
 - Phone: no long-press action on the terminal (it opened the screen text and got in the way of scrolling);
   only a short tap opens the keyboard.

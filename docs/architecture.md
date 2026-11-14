@@ -16,6 +16,15 @@ browser (xterm.js + WebGL) ──WebSocket /ws/term──► console (aiohttp, a
 - Saved sessions live in tmux session `main`; each browser terminal gets its own grouped tmux session
   (`web-xxxxxx`, `destroy-unattached on`) so every tab can look at a different window.
 
+## Hosts that ask for the password
+
+`auth: "ask"` (flag `ask_password` in `hosts.json`, no secret): `POST /api/hosts/{hid}/unlock` runs
+`ssh -M -N -f` with the password (handed to `SSH_ASKPASS` through a one-time file on the tmpfs, deleted when
+read — not in the environment of the long-lived master). Every other call uses `ControlMaster=no` with that
+master's `ControlPath` and never authenticates itself; without the socket the host is *locked* (no ssh is
+started). The master ends with the connection (`ServerAliveInterval=15`, `ServerAliveCountMax=3`), on **Lock**
+(`ssh -O exit`) and with the console (sockets are cleared at startup).
+
 ## Terminal modes
 
 ### Classic

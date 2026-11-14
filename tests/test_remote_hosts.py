@@ -100,3 +100,42 @@ def test_askpass_is_runnable_even_if_runtime_is_noexec(console):
     assert askpass.exists() and os.access(askpass, os.X_OK)
     out = subprocess.run([str(askpass)], env={"DEVBOX_ASKPASS_PW": "p@ss"}, capture_output=True, text=True).stdout
     assert out == "p@ss\n"
+
+
+def test_ask_password_every_connection(console):
+    """"ask" hosts: no key installed, nothing stored; the password opens one master connection and is forgotten."""
+    st, r = console.call("POST", "/api/hosts", {"label": "Ask Box", "hostname": "fakehost", "username": "dev", "auth": "ask"})
+    assert st == 400, "a password is needed to connect"
+    st, r = console.call("POST", "/api/hosts", {"label": "Ask Box", "hostname": "fakehost", "username": "dev",
+                                                "auth": "ask", "password": "nope"})
+    assert st >= 400 and "wrong password" in r
+    r = console.ok("POST", "/api/hosts", {"label": "Ask Box", "hostname": "fakehost", "username": "dev",
+                                          "auth": "ask", "password": "secret"})
+    h = short(r["hosts"])["ask-box"]
+    assert h["auth"] == "ask" and not h["locked"] and not h["error"]
+    ak = console.remote_home / ".ssh/authorized_keys"
+    assert not ak.exists() or "devbox-console" not in ak.read_text(), "no key is installed"
+    assert "secret" not in json.dumps(json.loads((console.data / "users").glob("*/hosts.json").__next__().read_text()))
+    (console.remote_home / "proj-q").mkdir(exist_ok=True)
+    console.ok("POST", "/api/sessions?host=ask-box", {"name": "q1", "cwd": "~/proj-q", "command": "sleep 300"})
+    assert console.window("q1", host="ask-box")["running"]
+
+    r = console.ok("POST", "/api/hosts/ask-box/lock")
+    assert short(r["hosts"])["ask-box"]["locked"]
+    st, r = console.call("GET", "/api/fs/list?host=ask-box&path=~")
+    assert st >= 400 and "locked" in r, "nothing reaches a locked host"
+    assert console.call("POST", "/api/hosts/ask-box/unlock", {"password": "nope"})[0] >= 400
+    r = console.ok("POST", "/api/hosts/ask-box/unlock", {"password": "secret"})
+    assert not short(r["hosts"])["ask-box"]["locked"]
+    console.ok("DELETE", "/api/sessions/q1?host=ask-box")
+
+    # switching an existing key host to "ask" can take the console key out of authorized_keys
+    console.ok("DELETE", "/api/hosts/ask-box")
+    console.ok("POST", "/api/hosts", {"label": "Key Box", "hostname": "fakehost", "username": "dev", "password": "secret"})
+    assert "devbox-console" in ak.read_text()
+    r = console.ok("PATCH", "/api/hosts/key-box", {"auth": "ask", "password": "secret", "remove_key": True})
+    assert short(r["hosts"])["key-box"]["auth"] == "ask"
+    assert "devbox-console" not in ak.read_text(), "console key removed from the host"
+    r = console.ok("PATCH", "/api/hosts/key-box", {"label": "Key Box 2"})
+    assert short(r["hosts"])["key-box"]["auth"] == "ask", "editing other fields keeps the mode"
+    console.ok("DELETE", "/api/hosts/key-box")

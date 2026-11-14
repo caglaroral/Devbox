@@ -9,10 +9,12 @@ non-GET requests are refused (Origin check). Endpoints that act on one machine t
 | Method | Path | |
 |---|---|---|
 | GET | `/api/hosts` | hosts with reachability, info, session summaries |
-| POST | `/api/hosts` | add a host (`label, hostname, port, username` + `password[, store_password]` / `private_key` / `auth: "manual"`) |
+| POST | `/api/hosts` | add a host (`label, hostname, port, username` + `password[, store_password]` / `private_key` / `auth: "manual"` / `auth: "ask", password[, remove_key]`) |
 | PATCH | `/api/hosts/{hid}` | edit |
 | DELETE | `/api/hosts/{hid}` | remove (tmux on the host is not touched) |
 | POST | `/api/hosts/{hid}/test` | probe: OS, hostname, tmux, claude |
+| POST | `/api/hosts/{hid}/unlock` | `{password}` — open the connection of an `auth: "ask"` host (password not kept) |
+| POST | `/api/hosts/{hid}/lock` | close it; the password is asked again |
 | GET | `/api/ssh-key` | the console's public key |
 
 ## Sessions and windows (`?host=`)
