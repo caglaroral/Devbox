@@ -929,7 +929,7 @@ function renderHosts() {
     const sess = all.filter((x) => !x.hidden), nHidden = all.length - sess.length;
     const busy = all.filter((x) => x.status === "working").length;
     return `<li class="host-row ${h.id === S.hostId ? "cur" : ""}" data-host="${esc(h.id)}" title="${esc(h.error || `${h.username || ""}@${h.hostname || ""}`)}">
-      <span class="grip" data-grip title="Drag to reorder">⠿</span><span class="hico">${h.remote ? "⇄" : "⌂"}</span><span class="nm">${esc(h.label)}</span>
+      <span class="grip" data-grip title="Drag to reorder">⠿</span><span class="nm">${esc(h.label)}</span>
       <span class="dot ${hostDot(h)}" title="${h.error ? "not connected" : "connected"}"></span><span class="tag" title="working / total">${busy ? `<b class="busy">${busy}</b>/` : ""}${sess.length}</span>
       ${h.remote ? `<button class="icon-btn edit" data-hedit="${esc(h.id)}" title="Edit host">✎</button>` : ""}
     </li>` + (sess.length ? sess.map((x) => `

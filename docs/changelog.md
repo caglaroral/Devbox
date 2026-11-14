@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.8.8
+- Sidebar tree without the ⇄ / ⌂ host icons (they stay on the Hosts and Sessions pages).
+
 ## v0.8.7
 - **Reorder hosts by drag and drop** in the sidebar tree (a host moves with its sessions): the ⠿ grip, or the
   host row with a mouse. The order is kept on the server and also used on the Hosts and Sessions pages.
