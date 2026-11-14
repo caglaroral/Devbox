@@ -3,7 +3,8 @@
 ## Layout
 
 The sidebar has, from the top: **Hosts**, **Sessions**, **Team**, **Settings**, then the **Hosts & Sessions** tree.
-The tree lists every host with its sessions and shells. Hovering an item (always on touch screens) shows two
+The tree lists every host with its sessions and shells. Drag a host (the ⠿ grip, or the row with a mouse) to change the order; its sessions move with it and the
+order is the same on every device and on the Hosts / Sessions pages. Hovering an item (always on touch screens) shows two
 buttons on its right: a folder (the session's **Files**) and **✕** (close / hide, see below). The bottom-left
 corner shows the console version and build commit, e.g. `devbox v0.7.6 · 3f2c1ab`.
 

@@ -1136,7 +1136,12 @@ class User:
         return b
 
     def all_boxes(self) -> list[Box]:
-        return [self.box("local"), *(self.box(h["id"]) for h in self.load_hosts())]
+        """All hosts, in the order the user dragged them into (settings `host_order`; new ones at the end)."""
+        ids = ["local", *(h["id"] for h in self.load_hosts())]
+        order = {hid: i for i, hid in enumerate(self.load_settings().get("host_order") or [])}
+        pos = {hid: i for i, hid in enumerate(ids)}  # (list.index can't be used while the list is being sorted)
+        ids.sort(key=lambda hid: (order.get(hid, len(order)), pos[hid]))
+        return [self.box(hid) for hid in ids]
 
     def drop_box(self, host_id: str) -> None:
         b = self.boxes.pop(host_id, None)
@@ -1477,6 +1482,18 @@ async def _probe(box: Box) -> dict:
 
 async def api_hosts(req):
     return web.json_response({"hosts": U(req).hosts_summary()})
+
+
+async def api_host_order(req):
+    """The hosts' order in the sidebar tree (and on the Hosts / Sessions pages): {order: [host ids]}."""
+    u, body = U(req), await req.json()
+    known = {"local", *(h["id"] for h in u.load_hosts())}
+    order = [str(x) for x in body.get("order") or [] if str(x) in known]
+    st = _load_json(u.dir / "settings.json", {})  # raw: don't write the defaults load_settings() fills in
+    st["host_order"] = list(dict.fromkeys(order))
+    u.save_settings(st)
+    u.broadcast_hosts()
+    return web.json_response({"hosts": u.hosts_summary()})
 
 
 async def api_ssh_key(req):
@@ -2755,6 +2772,7 @@ def make_app() -> web.Application:
     r.add_get("/api/whoami", api_whoami)
     r.add_post("/api/logout", api_logout)
     r.add_get("/api/hosts", api_hosts)
+    r.add_put("/api/hosts/order", api_host_order)
     r.add_post("/api/hosts", api_create_host)
     r.add_patch("/api/hosts/{hid}", api_update_host)
     r.add_delete("/api/hosts/{hid}", api_delete_host)

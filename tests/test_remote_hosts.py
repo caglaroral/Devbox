@@ -168,3 +168,17 @@ def test_ask_password_every_connection(console):
     r = console.ok("PATCH", "/api/hosts/key-box", {"label": "Key Box 2"})
     assert short(r["hosts"])["key-box"]["auth"] == "ask", "editing other fields keeps the mode"
     console.ok("DELETE", "/api/hosts/key-box")
+
+
+def test_host_order(console):
+    console.ok("POST", "/api/hosts", {"label": "Box A", "hostname": "fakehost", "username": "dev", "password": "secret"})
+    console.ok("POST", "/api/hosts", {"label": "Box B", "hostname": "fakehost", "username": "dev2", "password": "secret"})
+    ids = [h["id"] for h in console.ok("GET", "/api/hosts")["hosts"]]
+    assert ids == ["local", "box-a", "box-b"]
+    r = console.ok("PUT", "/api/hosts/order", {"order": ["box-b", "local", "nope", "box-a"]})
+    assert [h["id"] for h in r["hosts"]] == ["box-b", "local", "box-a"], "unknown ids are dropped"
+    console.ok("POST", "/api/hosts", {"label": "Box C", "hostname": "fakehost", "username": "dev3", "password": "secret"})
+    assert [h["id"] for h in console.ok("GET", "/api/hosts")["hosts"]] == ["box-b", "local", "box-a", "box-c"], \
+        "new hosts go to the end"
+    settings = (console.data / "users" / console.user / "settings.json").read_text()
+    assert "new_window_command" not in settings, "only the order is written"

@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.8.7
+- **Reorder hosts by drag and drop** in the sidebar tree (a host moves with its sessions): the ⠿ grip, or the
+  host row with a mouse. The order is kept on the server and also used on the Hosts and Sessions pages.
+
 ## v0.8.6
 - Shell editor: "Folder" is now **Start folder**.
 

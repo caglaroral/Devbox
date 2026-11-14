@@ -9,6 +9,7 @@ non-GET requests are refused (Origin check). Endpoints that act on one machine t
 | Method | Path | |
 |---|---|---|
 | GET | `/api/hosts` | hosts with reachability, info, session summaries |
+| PUT | `/api/hosts/order` | `{order: [host ids]}` — order of the hosts (tree, pages) |
 | POST | `/api/hosts` | add a host (`label, hostname, port, username` + `password[, store_password]` / `private_key` / `auth: "manual"` / `auth: "ask", password[, remove_key]`) |
 | PATCH | `/api/hosts/{hid}` | edit |
 | DELETE | `/api/hosts/{hid}` | remove (tmux on the host is not touched) |

@@ -519,3 +519,11 @@ dialog.wide[open] { display: flex; }
 /* host editor: password choice (two lines each) */
 #hostEditor [data-pane="password"] .check { display: flex; align-items: flex-start; line-height: 1.4; }
 #hostEditor [data-pane="password"] .check input { margin-top: 3px; flex: none; }
+/* host order: drag the grip (or the host row with a mouse) */
+#hostList li.host-row .grip { width: 12px; margin-left: -4px; color: var(--fg-subtle); cursor: grab; font-size: 12px;
+  visibility: hidden; touch-action: none; user-select: none; }
+#hostList li.host-row:hover .grip { visibility: visible; }
+@media (pointer: coarse) { #hostList li.host-row .grip { visibility: visible; width: 18px; font-size: 15px; } }
+#hostList.reordering, #hostList.reordering li { cursor: grabbing; user-select: none; }
+#hostList li.dragging { opacity: .45; }
+#hostList li.drop-mark { height: 2px; padding: 0; margin: 2px 6px; background: var(--accent); border-radius: 1px; pointer-events: none; }

@@ -922,13 +922,14 @@ function hostSessions(h) {
 }
 function renderHosts() {
   renderHostCards();
+  if ($("#hostList").classList.contains("reordering")) return; // a drag is in progress: redrawn when it ends
   const list = S.hosts.length ? S.hosts : [{ id: "local", label: S.host, remote: false }];
   setHTML($("#hostList"), list.map((h) => {
     const all = hostSessions(h);
     const sess = all.filter((x) => !x.hidden), nHidden = all.length - sess.length;
     const busy = all.filter((x) => x.status === "working").length;
     return `<li class="host-row ${h.id === S.hostId ? "cur" : ""}" data-host="${esc(h.id)}" title="${esc(h.error || `${h.username || ""}@${h.hostname || ""}`)}">
-      <span class="hico">${h.remote ? "⇄" : "⌂"}</span><span class="nm">${esc(h.label)}</span>
+      <span class="grip" data-grip title="Drag to reorder">⠿</span><span class="hico">${h.remote ? "⇄" : "⌂"}</span><span class="nm">${esc(h.label)}</span>
       <span class="dot ${hostDot(h)}" title="${h.error ? "not connected" : "connected"}"></span><span class="tag" title="working / total">${busy ? `<b class="busy">${busy}</b>/` : ""}${sess.length}</span>
       ${h.remote ? `<button class="icon-btn edit" data-hedit="${esc(h.id)}" title="Edit host">✎</button>` : ""}
     </li>` + (sess.length ? sess.map((x) => `
@@ -941,6 +942,69 @@ function renderHosts() {
       + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} hidden (running)</li>` : "");
   }).join(""));
 }
+/* drag a host (with its sessions) to reorder the tree: the grip ⠿ (any pointer) or the host row itself (mouse).
+   Pointer events, so it works on phones too; the order is saved on the server (same on every device). */
+(() => {
+  const list = $("#hostList");
+  let drag = null, justDragged = false;
+  const groups = () => { // [{id, els}] in the current DOM order
+    const out = [];
+    for (const li of list.children) {
+      if (li.classList.contains("host-row")) out.push({ id: li.dataset.host, els: [li] });
+      else if (out.length) out[out.length - 1].els.push(li);
+    }
+    return out;
+  };
+  list.addEventListener("pointerdown", (e) => {
+    const row = e.target.closest("li.host-row");
+    if (!row || e.button > 0 || e.target.closest("button")) return;
+    const grip = !!e.target.closest("[data-grip]");
+    if (!grip && e.pointerType !== "mouse") return; // touch: only the grip (the rest of the tree scrolls)
+    drag = { id: row.dataset.host, y0: e.clientY, on: false, pid: e.pointerId, grip };
+    if (grip) e.preventDefault();
+  });
+  list.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    if (!drag.on) {
+      if (Math.abs(e.clientY - drag.y0) < 6) return;
+      drag.on = true;
+      list.setPointerCapture(e.pointerId);
+      list.classList.add("reordering");
+      for (const g of groups()) if (g.id === drag.id) g.els.forEach((el) => el.classList.add("dragging"));
+      drag.mark = document.createElement("li"); drag.mark.className = "drop-mark";
+    }
+    e.preventDefault();
+    // insert point: before the first other group whose middle is below the pointer
+    const gs = groups().filter((g) => g.id !== drag.id);
+    let before = null;
+    for (const g of gs) {
+      const a = g.els[0].getBoundingClientRect(), b = g.els[g.els.length - 1].getBoundingClientRect();
+      if (e.clientY < (a.top + b.bottom) / 2) { before = g; break; }
+    }
+    drag.before = before ? before.id : null;
+    if (before) list.insertBefore(drag.mark, before.els[0]); else list.appendChild(drag.mark);
+  });
+  const end = async (e) => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const d = drag; drag = null;
+    if (!d.on) return;
+    justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+    list.classList.remove("reordering");
+    d.mark?.remove();
+    const ids = S.hosts.map((h) => h.id).filter((id) => id !== d.id);
+    const at = d.before ? ids.indexOf(d.before) : ids.length;
+    ids.splice(at < 0 ? ids.length : at, 0, d.id);
+    const byId = Object.fromEntries(S.hosts.map((h) => [h.id, h]));
+    S.hosts = ids.map((id) => byId[id]).filter(Boolean);
+    renderHosts(); if (S.route === "sessions") renderCards();
+    try { S.hosts = (await api("/api/hosts/order", { method: "PUT", body: { order: ids } })).hosts; renderHosts(); }
+    catch (err) { toast(err.message); }
+  };
+  list.addEventListener("pointerup", end);
+  list.addEventListener("pointercancel", end);
+  // a drag that ends over a row must not also "click" it
+  list.addEventListener("click", (e) => { if (justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+})();
 $("#hostList").addEventListener("click", async (e) => {
   const ed = e.target.closest("[data-hedit]");
   if (ed) { e.stopPropagation(); return openHostEditor(ed.dataset.hedit); }
