@@ -1144,6 +1144,7 @@ $("#unlockForm").addEventListener("submit", async (e) => {
     S.hosts = (await api(`/api/hosts/${encodeURIComponent(dlg.dataset.hid)}/unlock`, { method: "POST", body: JSON.stringify({ password: pw }) })).hosts;
     $("#unlockPw").value = ""; dlg.close(); toast("Connected");
     renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards();
+    holdAsk();
     const after = unlockAfter; unlockAfter = null; if (after) after();
   } catch (err) { toast(err.message); $("#unlockPw").select(); }
   finally { btn.disabled = false; btn.textContent = "Connect"; }
@@ -2003,8 +2004,29 @@ function startEvents() {
   es.addEventListener("hosts", (e) => { S.hosts = JSON.parse(e.data); renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards(); });
   es.addEventListener("message", (e) => addMessage(JSON.parse(e.data)));
 }
-document.addEventListener("visibilitychange", () => {
+/* "ask" hosts stay connected while this page is in view; hiding the tab (other tab, minimised, phone screen off)
+   or closing it lets them close, and an open terminal of such a host is closed too (password again on return). */
+const PAGE_ID = Math.random().toString(36).slice(2, 12);
+let askResume = false;
+function holdAsk() {
   if (document.visibilityState !== "visible") return;
+  const hosts = S.hosts.filter((h) => h.auth === "ask" && !h.locked).map((h) => h.id);
+  if (hosts.length) fetch("/api/hosts/hold", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page: PAGE_ID, hosts }) }).catch(() => {});
+}
+function releaseAsk() {
+  if (!S.hosts.some((h) => h.auth === "ask")) return;
+  navigator.sendBeacon?.("/api/hosts/hold", new Blob([JSON.stringify({ page: PAGE_ID, release: true })], { type: "application/json" }));
+}
+setInterval(holdAsk, 15000);
+window.addEventListener("pagehide", releaseAsk);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") {
+    releaseAsk();
+    if (ws && isTermRoute() && S.hosts.find((h) => h.id === S.hostId)?.auth === "ask") { closeWs(); askResume = true; }
+    return;
+  }
+  holdAsk();
+  if (askResume) { askResume = false; if (isTermRoute() && !ws) return connect(); }
   if (renderAll.pending) { renderAll.pending = false; renderAll(); }
   if (isTermRoute() && !ws) connect();
   else { checkAlive(); claimSize(); }

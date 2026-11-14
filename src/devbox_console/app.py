@@ -410,6 +410,7 @@ class Box:
         self.manual_size: set[str] = set()  # windows the buffer terminal sized (window-size manual)
         self.paste_mode: dict[str, bool] = {}  # pane id -> bracketed paste on (seen in its output)
         self.terms = 0  # open browser terminals ("ask" hosts: the connection lives while one is open)
+        self.holds: dict[str, float] = {}  # "ask" hosts: console pages in view that keep the connection (id -> expiry)
         self.idle_lock: asyncio.Task | None = None
 
     @property
@@ -443,8 +444,14 @@ class Box:
         if self.terms == 0:
             self.schedule_lock(3)
 
+    def held(self) -> bool:
+        now = time.time()
+        self.holds = {k: t for k, t in self.holds.items() if t > now}
+        return bool(self.holds)
+
     def schedule_lock(self, delay: float) -> None:
-        """"ask" hosts: close the connection when no terminal uses it, so the next one asks for the password."""
+        """"ask" hosts: close the connection when nothing uses it, so the next session / shell asks for the password.
+        In use = a terminal of this host is open, or a console page is in view (browser open on that tab)."""
         if not self.ask:
             return
         if self.idle_lock:
@@ -452,6 +459,8 @@ class Box:
 
         async def later():
             await asyncio.sleep(delay)
+            while self.terms == 0 and not self.locked() and self.held():
+                await asyncio.sleep(3)
             if self.terms == 0 and not self.locked():
                 await self.user.lock(self.host)
                 self.user.log.write("host.lock", host=self.id, by="idle")
@@ -1605,6 +1614,28 @@ async def api_unlock_host(req):
         pass
     u.broadcast_hosts()
     return web.json_response({"hosts": u.hosts_summary()})
+
+
+async def api_hold_hosts(req):
+    """A console page in view keeps its "ask" hosts connected: {page, hosts: [ids]} every ~15 s while visible,
+    {page, release: true} when the tab is hidden or closed (sendBeacon)."""
+    u = U(req)
+    try:
+        body = json.loads(await req.text() or "{}")
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad json")
+    page = str(body.get("page") or "")[:40]
+    if not page:
+        raise web.HTTPBadRequest(text="page missing")
+    want = set() if body.get("release") else {str(x) for x in body.get("hosts") or []}
+    for b in list(u.boxes.values()):
+        if not b.ask:
+            continue
+        if b.id in want:
+            b.holds[page] = time.time() + 45
+        elif b.holds.pop(page, None) is not None and b.terms == 0:
+            b.schedule_lock(3)
+    return web.json_response({"ok": True})
 
 
 async def api_lock_host(req):
@@ -2778,6 +2809,7 @@ def make_app() -> web.Application:
     r.add_delete("/api/hosts/{hid}", api_delete_host)
     r.add_post("/api/hosts/{hid}/test", api_test_host)
     r.add_post("/api/hosts/{hid}/unlock", api_unlock_host)
+    r.add_post("/api/hosts/hold", api_hold_hosts)
     r.add_post("/api/hosts/{hid}/lock", api_lock_host)
     r.add_get("/api/ssh-key", api_ssh_key)
     r.add_get("/api/windows", api_windows)

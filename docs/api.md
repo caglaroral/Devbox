@@ -16,6 +16,7 @@ non-GET requests are refused (Origin check). Endpoints that act on one machine t
 | POST | `/api/hosts/{hid}/test` | probe: OS, hostname, tmux, claude |
 | POST | `/api/hosts/{hid}/unlock` | `{password}` — open the connection of an `auth: "ask"` host (password not kept) |
 | POST | `/api/hosts/{hid}/lock` | close it; the password is asked again |
+| POST | `/api/hosts/hold` | `{page, hosts}` every ~15 s while a page is in view / `{page, release: true}` — keeps `ask` hosts connected |
 | GET | `/api/ssh-key` | the console's public key |
 
 ## Sessions and windows (`?host=`)

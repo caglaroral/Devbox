@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.9
+- "Ask" hosts stay connected **while the console page is in view** (browsing the tree, other pages): they close
+  when the tab is hidden (another tab, minimised, phone screen off) or closed; an open terminal of such a host
+  closes then too and asks for the password on return.
+
 ## v0.8.8
 - Sidebar tree without the ⇄ / ⌂ host icons (they stay on the Hosts and Sessions pages).
 

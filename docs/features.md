@@ -15,8 +15,9 @@ corner shows the console version and build commit, e.g. `devbox v0.7.6 · 3f2c1a
   - **Add the console's key to authorized_keys** (default): the password is used once to add the console's SSH key to the host's
     `~/.ssh/authorized_keys`; later connections use the key. The password is kept nowhere.
   - **Ask for the password at every connection**: no key on the host and nothing saved anywhere (can be added
-    without a password). Opening a session or shell asks for the password; the connection stays open while a
-    terminal of that host is open and closes 3 s after the last one, so the next one asks again. tmux (and claude
+    without a password). Opening a session or shell asks for the password; the connection stays open while the
+    console page is in view (browse freely) and closes when the tab is hidden (another tab, minimised, phone screen
+    off) or closed — then the next session / shell asks again. tmux (and claude
     for a claude session) are checked at that moment; if missing, the session/shell is not opened and the error
     says what is missing. While locked the last known sessions stay listed. Switching a key host to this mode
     can also remove the console's key from the host's `authorized_keys`.

@@ -182,3 +182,26 @@ def test_host_order(console):
         "new hosts go to the end"
     settings = (console.data / "users" / console.user / "settings.json").read_text()
     assert "new_window_command" not in settings, "only the order is written"
+
+
+def test_ask_host_stays_open_while_a_page_is_in_view(console):
+    import time
+    console.ok("POST", "/api/hosts", {"label": "Held", "hostname": "fakehost", "username": "held", "auth": "ask",
+                                      "password": "secret"})
+    console.ok("POST", "/api/hosts/hold", {"page": "p1", "hosts": ["held"]})
+    ws_url = console.url.replace("http", "ws") + "/ws/term?host=held&shell=1&cols=80&rows=24"
+
+    async def open_close():
+        async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
+            async with s.ws_connect(ws_url) as ws:
+                await asyncio.sleep(0.5)
+
+    asyncio.run(open_close())
+    time.sleep(4.5)
+    assert not short(console.ok("GET", "/api/hosts")["hosts"])["held"]["locked"], "page in view: still connected"
+    console.ok("POST", "/api/hosts/hold", {"page": "p1", "release": True})
+    deadline = time.time() + 8
+    while time.time() < deadline and not short(console.ok("GET", "/api/hosts")["hosts"])["held"]["locked"]:
+        time.sleep(0.5)
+    assert short(console.ok("GET", "/api/hosts")["hosts"])["held"]["locked"], "tab hidden / closed: connection closes"
+    console.ok("DELETE", "/api/hosts/held")
