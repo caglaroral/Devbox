@@ -565,8 +565,8 @@ class Box:
         try:
             rc, raw = await self.run(["tmux", "list-windows", "-a", "-F", WIN_FMT])
         except Exception as e:  # noqa: BLE001  (ssh down etc.)
-            if self.locked():  # "ask" host without its connection: keep showing what was there
-                self.error = str(e)
+            if self.locked():  # "ask" host without its connection: not an error, keep showing what was there
+                self.error = None
                 self.broadcast("windows", self.snapshot())
                 return
             if self.error != str(e):
@@ -709,9 +709,28 @@ class Box:
                            for k, v in self.session_env().items())
         await self.sh(script)
 
+    async def check_tools(self, cmd: str) -> None:
+        """"ask" hosts are added without a probe: check tmux (and claude for a claude session) when one is opened."""
+        if not self.ask:
+            return
+        info = await _probe(self)
+        hosts = self.user.load_hosts()
+        for h in hosts:
+            if h["id"] == self.id:
+                h["info"] = info
+        self.user.save_hosts(hosts)
+        if self.host is not None:
+            self.host["info"] = info
+        if not info.get("tmux"):
+            raise web.HTTPBadRequest(text=f"tmux is not installed on {self.label} — install it to open sessions and shells")
+        w = cmd_words(cmd)
+        if w and w[0].rsplit("/", 1)[-1] == "claude" and not info.get("claude"):
+            raise web.HTTPBadRequest(text=f"claude is not installed on {self.label} (not found in the login shell's PATH)")
+
     async def start_window(self, name: str, cwd: str, cmd: str, keep: bool = True, env: dict | None = None) -> str:
         """Open tmux window `name` in `cwd` running `cmd` (claude) through a login shell.
         keep=False (shells): the window goes away when the program exits instead of staying as "dead"."""
+        await self.check_tools(cmd)
         fmt = ["-P", "-F", "#{window_id}", "-n", name, "-c", cwd, *self.window_env_args(),
                *(a for k, v in (env or {}).items() for a in ("-e", f"{k}={v}"))]
         if await self.has_session():
@@ -801,6 +820,7 @@ class Box:
                             fork: bool = False) -> None:
         """Restart claude inside the running window (same window id: open terminals stay attached)."""
         cwd, cmd, env = await self.build_claude(name, resume, conv, fork)
+        await self.check_tools(cmd)
         await self.tmux("respawn-pane", "-k", "-t", wid, "-c", cwd, *self.window_env_args(),
                         *(a for k, v in env.items() for a in ("-e", f"{k}={v}")), login_cmd(cmd), check=True)
 

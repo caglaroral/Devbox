@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.3
+- "Ask" hosts: no Unlock / Lock buttons — the password is asked only when a session or shell is opened; tmux
+  (and claude for a claude session) are checked then, with a clear error if missing. A locked host is not shown
+  as an error. Adding one stays on the Hosts page.
+
 ## v0.8.2
 - "Ask" hosts: the password is asked **each time a session or shell is opened**. The connection lives while a
   terminal of that host is open and closes 3 s after the last one (60 s after an Unlock without a terminal);

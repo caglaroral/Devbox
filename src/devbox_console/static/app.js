@@ -910,6 +910,7 @@ function switchHost(hid) {
 }
 
 function hostDot(h) {
+  if (h.locked) return "h-wait";
   if (h.error) return "h-err";
   return h.last_ok ? "h-ok" : "h-wait";
 }
@@ -987,10 +988,10 @@ function renderHostCards() {
         ${miss.length ? ` · <span class="danger-text">missing: ${miss.join(", ")}</span>` : ""}</div>
       <div class="card-foot">
         <span><span class="lbl">${all.length}</span> session${all.length === 1 ? "" : "s"} · <span class="lbl">${running}</span> running${busy ? ` · <b class="busy">${busy}</b> working` : ""}</span>
-        ${h.remote ? `<span class="pill">${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
+        ${h.remote ? `<span class="pill" title="${h.auth === "ask" ? "the password is asked when a session or shell is opened" : ""}">${h.auth === "ask" ? "🔒 " : ""}${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
         <span class="grow"></span>
         ${h.remote ? `<button class="btn danger" data-ha="delete">Delete</button><button class="btn" data-ha="test">Test</button>` : ""}
-        ${h.locked ? `<button class="btn primary" data-ha="unlock" title="Enter the password to connect">🔒 Unlock</button>` : h.auth === "ask" ? `<button class="btn" data-ha="lock" title="Close the connection; the password is asked again">Lock</button>` : ""}
+
         <button class="btn" data-ha="shell" title="Login shell on this host in tmux — not saved; come back to it any time, exit closes it">Shell</button>
         <button class="btn primary" data-ha="sessions">Sessions</button>
       </div>
@@ -1138,8 +1139,11 @@ $("#hostForm").addEventListener("submit", async (e) => {
       const r = await api("/api/hosts", { method: "POST", body });
       S.hosts = r.hosts; closeHostEditor();
       const i = r.host.info || {};
-      toast(`Connected: ${r.host.label}` + (!i.tmux || !i.claude ? " — something is not installed" : ""));
-      go(`#/h/${encodeURIComponent(r.host.id)}/sessions`);
+      if (r.host.auth === "ask") { toast(`Added: ${r.host.label} — the password is asked when a session or shell is opened`); renderHostCards(); }
+      else {
+        toast(`Connected: ${r.host.label}` + (!i.tmux || !i.claude ? " — something is not installed" : ""));
+        go(`#/h/${encodeURIComponent(r.host.id)}/sessions`);
+      }
     }
     renderHosts();
   } catch (err) { toast(err.message); }
@@ -1322,7 +1326,6 @@ function groupHead(h, wins) {
       ${err ? `<span class="danger-text small">${esc(err)}</span>` : ""}
       ${miss.length ? `<span class="small">⚠ Missing: <b>${miss.join(", ")}</b></span>` : ""}
       <span class="grow"></span>
-      ${h.locked ? `<button class="btn primary" data-ga="unlock" title="Enter the password to connect">🔒 Unlock</button>` : ""}
       <button class="btn" data-ga="shell" title="Login shell on this host in tmux — not saved; come back to it any time, exit closes it">Shell</button>
       <button class="btn" data-ga="new">＋ New<span class="hide-mobile"> session</span></button>
     </div>`;
