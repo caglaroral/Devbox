@@ -1033,6 +1033,7 @@ $("#hostCards").addEventListener("click", async (e) => {
 
 /* "ask" hosts: the password opens the connection and is not kept */
 let unlockAfter = null;
+$("#unlockCancel").onclick = () => { unlockAfter = null; $("#unlockPw").value = ""; $("#unlockDlg").close(); };
 function unlockHost(hid, after = null) {
   const dlg0 = $("#unlockDlg");
   if (dlg0.open) { if (after) unlockAfter = after; return; }
@@ -1044,8 +1045,8 @@ function unlockHost(hid, after = null) {
   const dlg = $("#unlockDlg"); dlg.dataset.hid = hid; dlg.showModal(); $("#unlockPw").focus();
 }
 $("#unlockForm").addEventListener("submit", async (e) => {
+  // Enter in the password field submits with the default button, which must be Connect (Cancel is type=button)
   const dlg = $("#unlockDlg");
-  if (e.submitter?.value !== "ok") return;
   e.preventDefault();
   const pw = $("#unlockPw").value; if (!pw) return;
   const btn = $("#unlockOk"); btn.disabled = true; btn.textContent = "Connecting…";

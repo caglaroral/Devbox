@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.8.4
+- Fix: Enter in the password dialog pressed Cancel (the first button), so the shell / session never opened.
+
 ## v0.8.3
 - "Ask" hosts: no Unlock / Lock buttons — the password is asked only when a session or shell is opened; tmux
   (and claude for a claude session) are checked then, with a clear error if missing. A locked host is not shown
