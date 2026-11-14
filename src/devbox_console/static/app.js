@@ -734,7 +734,7 @@ function openManage() {
   $$("#manageDlg [data-mg]").forEach((b) => {
     const needsRun = ["interrupt", "send", "text", "copy", "paste", "attach"].includes(b.dataset.mg);
     b.disabled = (needsRun && !w.running) || ((w.external || w.shell) && ["edit", "restart", "resume", "convs"].includes(b.dataset.mg))
-      || (b.dataset.mg === "convs" && !w.saved) || (b.dataset.mg === "files" && w.external);
+      || (b.dataset.mg === "convs" && !w.saved);
   });
   $("#manageDlg").showModal();
 }
@@ -917,7 +917,7 @@ function renderHosts() {
     <li class="sess s-${x.status} ${x.running ? "" : "off"} ${S.route === "term" && h.id === S.hostId && x.name === S.current ? "active" : ""}"
         data-host="${esc(h.id)}" data-name="${esc(x.name)}" title="${esc(STATUS_LABEL[x.status] || x.status)}${x.cwd ? " · " + esc(shortPath(x.cwd)) : ""}">
       <span class="dot"></span>${x.shell ? '<span class="sh">$</span>' : ""}<span class="nm">${esc(x.display)}</span>
-      ${x.external ? "" : `<button class="icon-btn tfiles" data-tfiles title="Files of this session">${ICON_FOLDER}</button>`}
+      <button class="icon-btn tfiles" data-tfiles title="Files of this session">${ICON_FOLDER}</button>
       <button class="icon-btn tclose" data-tclose title="Close / hide…">✕</button>
     </li>`).join("") : `<li class="empty-sess">${h.error ? "cannot connect" : "no sessions"}</li>`)
       + (nHidden ? `<li class="more" data-host="${esc(h.id)}" data-hidden="1">+${nHidden} hidden (running)</li>` : "");
@@ -1040,6 +1040,8 @@ let hEditing = null, hAuth = "password";
 function syncPwMode() {
   const h = hEditing && S.hosts.find((x) => x.id === hEditing);
   $("#hRemoveKeyRow").classList.toggle("hidden", !($("#hPwAsk").checked && h && h.auth === "console-key"));
+  $("#hPassword").placeholder = $("#hPwAsk").checked ? "optional — or enter it when connecting"
+    : $("#hStorePw").checked ? "saved in Vault" : "used only once";
 }
 $$('[name="hPwMode"]').forEach((r) => r.addEventListener("change", syncPwMode));
 function setAuthPane(a) {
@@ -1092,7 +1094,6 @@ $("#hostForm").addEventListener("submit", async (e) => {
   if (hAuth === "password" && !$("#hPassword").value && ["password", "ask"].includes(curH?.auth) && $("#hPwOnce").checked)
     return toast("Enter the password once to switch this host to the console key");
   if (hAuth === "password" && $("#hPwAsk").checked) {
-    if (!$("#hPassword").value && !(curH?.auth === "ask")) return toast("Enter the password to connect");
     body.auth = "ask";
     if ($("#hPassword").value) body.password = $("#hPassword").value;
     if (curH && curH.auth !== "ask" && !$("#hRemoveKeyRow").classList.contains("hidden") && $("#hRemoveKey").checked) body.remove_key = true;
@@ -1105,7 +1106,7 @@ $("#hostForm").addEventListener("submit", async (e) => {
     body.auth = "manual";
   }
   if (hAuth === "key" && $("#hKey").value.trim()) body.private_key = $("#hKey").value.trim();
-  if (!hEditing && hAuth === "password" && !body.password) return toast("Enter a password (or choose Manual / Private key)");
+  if (!hEditing && hAuth === "password" && !body.password && body.auth !== "ask") return toast("Enter a password (or choose Manual / Private key, or \"Ask for the password at every connection\")");
   const btn = $("#hSave"); btn.disabled = true; btn.textContent = "Connecting…";
   try {
     if (hEditing) {
@@ -1264,7 +1265,7 @@ function cardHTML(w, hid) {
       <div class="card-head">
         <span class="tile ${w.shell ? "tile-shell" : ""}">${w.shell ? "$" : esc(initials(w.display))}<span class="dot" title="${esc(STATUS_LABEL[w.status] || w.status)}"></span></span>
         <div class="card-title"><b>${esc(w.display)}</b><span class="muted small"><code>${esc(w.name)}</code>${w.shell ? " · shell, not saved" : w.saved || w.external ? "" : " · unsaved"}</span></div>
-        ${w.external ? "" : `<button class="icon-btn" data-act="files" title="Files of this session">${ICON_FOLDER}</button>`}
+        <button class="icon-btn" data-act="files" title="Files of this session">${ICON_FOLDER}</button>
         ${w.saved && !w.shell ? `<button class="icon-btn" data-act="convs" title="Claude conversations">${ICON_HISTORY}</button>` : ""}
         ${w.external || w.shell ? "" : `<button class="icon-btn" data-act="edit" title="Edit">✎</button>`}
         <button class="icon-btn" data-act="close" title="Close / hide">✕</button>

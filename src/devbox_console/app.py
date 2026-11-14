@@ -1438,8 +1438,13 @@ async def api_create_host(req):
     while hid == "local" or any(x["id"] == hid for x in hosts):
         hid, n = f"{base}-{n}", n + 1
     h = {"id": hid, **h, "created": time.time()}
-    if body.get("auth") == "ask" and not body.get("password"):
-        raise web.HTTPBadRequest(text="enter the password to connect")
+    if body.get("auth") == "ask" and not body.get("password"):  # saved locked: the password comes at connect time
+        h["ask_password"] = True
+        hosts.append(h)
+        u.save_hosts(hosts)
+        u.box(hid)
+        u.broadcast_hosts()
+        return web.json_response({"host": u.box(hid).summary(), "hosts": u.hosts_summary()})
     await u.ensure_key()
     try:
         await _apply_host_auth(u, hid, h, body)

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.1
+- A host with "ask for the password at every connection" can be added without a password: it is saved locked
+  and the password is entered at the first connection (🔒 Unlock).
+- Files button also for tmux windows opened outside the console (external), starting in the pane's folder.
+
 ## v0.8.0
 - **Ask for the password at every connection** (new host authentication): no key on the host, nothing saved;
   the password opens one shared SSH connection, the host shows 🔒 Unlock when it has to be reopened; Lock button;

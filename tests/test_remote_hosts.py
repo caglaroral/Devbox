@@ -104,8 +104,11 @@ def test_askpass_is_runnable_even_if_runtime_is_noexec(console):
 
 def test_ask_password_every_connection(console):
     """"ask" hosts: no key installed, nothing stored; the password opens one master connection and is forgotten."""
-    st, r = console.call("POST", "/api/hosts", {"label": "Ask Box", "hostname": "fakehost", "username": "dev", "auth": "ask"})
-    assert st == 400, "a password is needed to connect"
+    r = console.ok("POST", "/api/hosts", {"label": "Later", "hostname": "fakehost", "username": "later", "auth": "ask"})
+    assert short(r["hosts"])["later"]["locked"], "added without a password: locked until it is entered"
+    r = console.ok("POST", "/api/hosts/later/unlock", {"password": "secret"})
+    assert not short(r["hosts"])["later"]["locked"]
+    console.ok("DELETE", "/api/hosts/later")
     st, r = console.call("POST", "/api/hosts", {"label": "Ask Box", "hostname": "fakehost", "username": "dev",
                                                 "auth": "ask", "password": "nope"})
     assert st >= 400 and "wrong password" in r
