@@ -49,7 +49,7 @@ Card buttons: folder (**Files**), history (**Conversations**), **✎** edit, **�
 
 **Shell** opens a login shell in tmux on that host (`shell-1`, `shell-2`, …). Shells are listed with a `$` in the
 tree, are not saved (no record, no autostart), and you can come back to them from any device. `exit` (or ✕)
-closes them and they disappear from the list. **✎** gives a shell a name and can restart it in another folder.
+closes them and they disappear from the list. **✎** gives a shell a name and a start folder (changing it restarts the shell there).
 
 ## Claude conversations
 
