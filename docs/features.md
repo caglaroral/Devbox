@@ -11,12 +11,13 @@ corner shows the console version and build commit, e.g. `devbox v0.7.6 · 3f2c1a
 
 - **local** is the machine the console runs on (in the Docker install it is reached over SSH like any other).
 - Remote hosts are added on the Hosts page. Authentication:
-  - **Password, not saved** (default): used once to add the console's SSH key to the host's
+  - **Add the console's key to authorized_keys** (default): the password is used once to add the console's SSH key to the host's
     `~/.ssh/authorized_keys`; later connections use the key. The password is kept nowhere.
-  - **Ask for the password at every connection**: no key on the host and nothing saved anywhere. The password
-    opens one SSH connection that all of the console's work for that host shares; when it has to be opened
-    again (console update/restart, network drop, host reboot) the host shows **🔒 Unlock** (host card and the
-    Sessions page) and waits for the password. **Lock** closes it on purpose. Switching a key host to this mode
+  - **Ask for the password at every connection**: no key on the host and nothing saved anywhere (can be added
+    without a password). Opening a session or shell asks for the password; the connection stays open while a
+    terminal of that host is open and closes 3 s after the last one, so the next one asks again. While locked
+    the last known sessions stay listed; **🔒 Unlock** (host card, Sessions page) opens it for 60 s, **Lock**
+    closes it at once. Switching a key host to this mode
     can also remove the console's key from the host's `authorized_keys`.
   - **Password, saved in Vault**: only for hosts that don't allow key login.
   - **Private key** (pasted, kept in Vault) or **Manual** (you add the console's public key yourself).

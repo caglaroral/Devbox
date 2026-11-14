@@ -44,7 +44,15 @@ async function api(path, opts = {}) {
     body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body,
   });
   if (r.status === 401) { location.href = "/login"; throw new Error("login"); }
-  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  if (!r.ok) {
+    const err = new Error((await r.text()) || r.statusText);
+    if (err.message.includes("locked — enter the password")) { // "ask" host: get the password, then the caller may retry
+      err.locked = true;
+      // only for actions (not for lists that refresh by themselves, e.g. the Files panel every 5 s)
+      if ((opts.method || "GET") !== "GET" && !opts.noUnlock) unlockHost(opts.host || S.hostId, opts.onUnlock);
+    }
+    throw err;
+  }
   return r.json();
 }
 const sessApi = (name, sub = "", opts = {}) => api(`/api/sessions/${encodeURIComponent(name)}${sub}`, opts);
@@ -230,6 +238,13 @@ function connect() {
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {
       if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; }
+      if (ev.data === "locked") { // "ask" host: the password opens the connection for this terminal
+        wsWanted = false;
+        overlay(`<div class="stopped-box"><b>🔒 ${esc(hostLabel(S.hostId))}</b><span>This host asks for the password at every connection.</span>
+          <div><button class="btn primary" data-ov="unlock">Enter password</button></div></div>`, true);
+        unlockHost(S.hostId, () => { if (isTermRoute()) connect(); });
+        return;
+      }
       const m = /^size:(\d+)x(\d+)$/.exec(ev.data);
       if (m) { paneSize = { cols: +m[1], rows: +m[2] }; term.resize(paneSize.cols, paneSize.rows); updateSizeBar(); }
       return;
@@ -258,6 +273,7 @@ function showStopped(w) {
 }
 $("#termOverlay").addEventListener("click", async (e) => {
   const a = e.target.dataset?.ov; if (!a) return;
+  if (a === "unlock") return unlockHost(S.hostId, () => { if (isTermRoute()) connect(); });
   await startSession(S.current, a === "resume");
 });
 
@@ -675,10 +691,10 @@ $("#cvList").addEventListener("click", async (e) => {
 // "Shell": a login shell in tmux on that host (not saved). Listed with the sessions, so you can come back to it.
 async function openShell(host = S.hostId) {
   try {
-    const r = await api("/api/shells", { method: "POST", body: {}, host });
+    const r = await api("/api/shells", { method: "POST", body: {}, host, onUnlock: () => openShell(host) });
     applySnapshot(r);
     go(termHash(host, r.name));
-  } catch (e) { toast(e.message); }
+  } catch (e) { if (!e.locked) toast(e.message); }
 }
 
 async function hideSession(name, hidden = true, host = S.hostId) {
@@ -1015,10 +1031,14 @@ $("#hostCards").addEventListener("click", async (e) => {
 });
 
 /* "ask" hosts: the password opens the connection and is not kept */
-function unlockHost(hid) {
+let unlockAfter = null;
+function unlockHost(hid, after = null) {
+  const dlg0 = $("#unlockDlg");
+  if (dlg0.open) { if (after) unlockAfter = after; return; }
+  unlockAfter = after;
   const h = S.hosts.find((x) => x.id === hid);
   $("#unlockTitle").textContent = `🔒 ${h?.label || hid}`;
-  $("#unlockInfo").textContent = `Password for ${h ? `${h.username}@${h.hostname}` : hid}. It opens the connection and is not saved; you will be asked again when the connection has to be reopened.`;
+  $("#unlockInfo").textContent = `Password for ${h ? `${h.username}@${h.hostname}` : hid}. It is not saved; the connection stays open while a terminal of this host is open, and the password is asked again next time.`;
   $("#unlockPw").value = "";
   const dlg = $("#unlockDlg"); dlg.dataset.hid = hid; dlg.showModal(); $("#unlockPw").focus();
 }
@@ -1032,6 +1052,7 @@ $("#unlockForm").addEventListener("submit", async (e) => {
     S.hosts = (await api(`/api/hosts/${encodeURIComponent(dlg.dataset.hid)}/unlock`, { method: "POST", body: JSON.stringify({ password: pw }) })).hosts;
     $("#unlockPw").value = ""; dlg.close(); toast("Connected");
     renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards();
+    const after = unlockAfter; unlockAfter = null; if (after) after();
   } catch (err) { toast(err.message); $("#unlockPw").select(); }
   finally { btn.disabled = false; btn.textContent = "Connect"; }
 });

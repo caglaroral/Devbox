@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.2
+- "Ask" hosts: the password is asked **each time a session or shell is opened**. The connection lives while a
+  terminal of that host is open and closes 3 s after the last one (60 s after an Unlock without a terminal);
+  the last known sessions stay listed while locked.
+- Host editor: "Don't save the password" is now **Add the console's key to authorized_keys**.
+
 ## v0.8.1
 - A host with "ask for the password at every connection" can be added without a password: it is saved locked
   and the password is entered at the first connection (🔒 Unlock).

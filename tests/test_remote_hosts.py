@@ -132,6 +132,32 @@ def test_ask_password_every_connection(console):
     assert not short(r["hosts"])["ask-box"]["locked"]
     console.ok("DELETE", "/api/sessions/q1?host=ask-box")
 
+    # a terminal keeps the connection; when the last one closes the host locks, the next terminal asks again
+    ws_url = console.url.replace("http", "ws") + "/ws/term?host=ask-box&shell=1&cols=80&rows=24"
+
+    async def term():
+        async with aiohttp.ClientSession(headers={"Cookie": console.cookie}) as s:
+            async with s.ws_connect(ws_url) as ws:
+                await ws.send_str(json.dumps({"t": "in", "d": "echo ASK-$((6*7))\r"}))
+                buf = b""
+                try:
+                    while b"ASK-42" not in buf:
+                        m = await asyncio.wait_for(ws.receive(), 3)
+                        if m.type != aiohttp.WSMsgType.BINARY:
+                            break
+                        buf += m.data
+                except asyncio.TimeoutError:
+                    pass
+                assert b"ASK-42" in buf
+            await asyncio.sleep(4.5)
+            async with s.ws_connect(ws_url) as ws:
+                m = await asyncio.wait_for(ws.receive(), 3)
+                assert m.type == aiohttp.WSMsgType.TEXT and m.data == "locked"
+
+    asyncio.run(term())
+    assert short(console.ok("GET", "/api/hosts")["hosts"])["ask-box"]["locked"]
+    console.ok("POST", "/api/hosts/ask-box/unlock", {"password": "secret"})
+
     # switching an existing key host to "ask" can take the console key out of authorized_keys
     console.ok("DELETE", "/api/hosts/ask-box")
     console.ok("POST", "/api/hosts", {"label": "Key Box", "hostname": "fakehost", "username": "dev", "password": "secret"})

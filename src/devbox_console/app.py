@@ -409,6 +409,8 @@ class Box:
         self.size_owner: dict[str, str] = {}  # window id -> buffer view whose device sizes it
         self.manual_size: set[str] = set()  # windows the buffer terminal sized (window-size manual)
         self.paste_mode: dict[str, bool] = {}  # pane id -> bracketed paste on (seen in its output)
+        self.terms = 0  # open browser terminals ("ask" hosts: the connection lives while one is open)
+        self.idle_lock: asyncio.Task | None = None
 
     @property
     def remote(self) -> bool:
@@ -426,6 +428,36 @@ class Box:
     def ask(self) -> bool:
         """Password asked at every connection: no key, nothing stored; calls ride on a master opened by unlock."""
         return bool(self.via_ssh and self.host and self.host.get("ask_password"))
+
+    def locked(self) -> bool:
+        return self.ask and not self.user.ask_path(self.id).exists()
+
+    def term_hold(self) -> None:
+        self.terms += 1
+        if self.idle_lock:
+            self.idle_lock.cancel()
+            self.idle_lock = None
+
+    def term_release(self) -> None:
+        self.terms = max(0, self.terms - 1)
+        if self.terms == 0:
+            self.schedule_lock(3)
+
+    def schedule_lock(self, delay: float) -> None:
+        """"ask" hosts: close the connection when no terminal uses it, so the next one asks for the password."""
+        if not self.ask:
+            return
+        if self.idle_lock:
+            self.idle_lock.cancel()
+
+        async def later():
+            await asyncio.sleep(delay)
+            if self.terms == 0 and not self.locked():
+                await self.user.lock(self.host)
+                self.user.log.write("host.lock", host=self.id, by="idle")
+                self.wake.set()
+                self.user.broadcast_hosts()
+        self.idle_lock = asyncio.get_running_loop().create_task(later())
 
     def ssh_base(self, tty: bool = False) -> list[str]:
         h = self.host
@@ -533,6 +565,10 @@ class Box:
         try:
             rc, raw = await self.run(["tmux", "list-windows", "-a", "-F", WIN_FMT])
         except Exception as e:  # noqa: BLE001  (ssh down etc.)
+            if self.locked():  # "ask" host without its connection: keep showing what was there
+                self.error = str(e)
+                self.broadcast("windows", self.snapshot())
+                return
             if self.error != str(e):
                 self.user.log.write("host.unreachable", host=self.id, error=str(e)[:300])
             self.error = str(e)
@@ -654,7 +690,7 @@ class Box:
                               "hidden": w["hidden"], "external": w["external"], "shell": w["shell"]}
                              for w in self.snapshot()["windows"]],
                 "info": (self.host or {}).get("info", {}), "auth": self.user.host_auth(self.id) if self.via_ssh else "local",
-                "locked": self.ask and not self.user.ask_path(self.id).exists()}
+                "locked": self.locked()}
 
     def session_env(self) -> dict:
         return {**self.user.session_env(), "DEVBOX_HOST_ID": self.id}
@@ -1462,7 +1498,7 @@ async def api_create_host(req):
     h["info"] = info
     hosts.append(h)
     u.save_hosts(hosts)
-    u.box(hid)
+    u.box(hid).schedule_lock(60)  # "ask": the connection closes again unless a terminal uses it
     u.broadcast_hosts()
     return web.json_response({"host": u.box(hid).summary(), "hosts": u.hosts_summary()})
 
@@ -1489,6 +1525,7 @@ async def api_update_host(req):
         u.save_hosts(hosts)
     except RuntimeError as e:
         raise web.HTTPBadGateway(text=str(e))
+    u.box(hid).schedule_lock(60)
     u.broadcast_hosts()
     return web.json_response({"hosts": u.hosts_summary()})
 
@@ -1521,6 +1558,8 @@ async def api_unlock_host(req):
         raise web.HTTPBadGateway(text=str(e))
     u.log.write("host.unlock", host=hid)
     b = u.box(hid)
+    if b.terms == 0:
+        b.schedule_lock(60)  # unlocked to open a session / shell: it closes again if none is opened
     b.wake.set()
     try:
         await b.poll_once()
@@ -2430,6 +2469,24 @@ async def on_shutdown(app):
 
 
 async def ws_term(req):
+    """"ask" hosts: a terminal needs the host's connection (opened with the password) and keeps it while open."""
+    b = B(req)
+    if not b.ask:
+        return await _ws_term(req)
+    if b.locked():
+        ws = web.WebSocketResponse()
+        await ws.prepare(req)
+        await ws.send_str("locked")
+        await ws.close()
+        return ws
+    b.term_hold()
+    try:
+        return await _ws_term(req)
+    finally:
+        b.term_release()
+
+
+async def _ws_term(req):
     u, b = U(req), B(req)
     ws = web.WebSocketResponse(heartbeat=30, max_msg_size=4 * 1024 * 1024)
     await ws.prepare(req)
