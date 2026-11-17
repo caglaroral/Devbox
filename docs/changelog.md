@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.9.0
+- "Ask" hosts: a shell (or session) can be **closed without the password** while the host is locked: it leaves
+  the list at once and ends on the host at the next unlock (the password dialog on close was a dead end).
+- Terminal connection over VPN / flaky networks: the browser pings every 20 s while in view (keeps the path warm,
+  finds a dead socket in ~30 s), the server waits 30 s for a pong instead of 15 s (short stalls no longer cut
+  the connection), reconnects retry after 0.5–5 s instead of up to 15 s.
+- Log: `term.close` says why (`why=no-pong` = the server's heartbeat gave up, otherwise the error type), and
+  `term.open` after a drop carries the browser's side (`re=` close code it saw, `re_hidden=` tab hidden then,
+  `re_gap=` seconds until back).
+
 ## v0.8.9
 - "Ask" hosts stay connected **while the console page is in view** (browsing the tree, other pages): they close
   when the tab is hidden (another tab, minimised, phone screen off) or closed; an open terminal of such a host

@@ -590,6 +590,7 @@ class Box:
         self.last_ok = time.time()
         if rc != 0:  # no tmux server / no session yet: that's simply "no sessions"
             raw = ""
+        raw = await self.close_pending(raw)
         lines_by_wid = {}
         rows, seen = [], set()
         for line in raw.splitlines():
@@ -655,6 +656,26 @@ class Box:
         except OSError:
             pass
         self.broadcast("windows", self.snapshot())
+
+    async def close_pending(self, raw: str) -> str:
+        """Windows deleted while the "ask" host had no connection: close them now (same id and name only, so a
+        window that ended meanwhile cannot take another one with it) and leave them out of this listing."""
+        s = self.load_sessions()
+        todo = s.pop("close_later", None)
+        if not todo:
+            return raw
+        gone = set()
+        for t in todo:
+            for line in raw.splitlines():
+                r = line.split(SEP)
+                if t.get("id") and len(r) > 9 and r[0] == t["id"] and r[2] == t["name"] and r[9] == SESSION:
+                    await self.tmux("kill-window", "-t", t["id"])
+                    gone.add(t["id"])
+            if t.get("key"):
+                await self.sh('rm -f "$HOME/.devbox/claude/$1.json"', t["key"])
+            self.user.log.write("session.closed_on_unlock", host=self.id, name=t["name"], closed=t.get("id") in gone)
+        self.save_sessions(s)
+        return "\n".join(ln for ln in raw.splitlines() if ln.split(SEP)[0] not in gone)
 
     def snapshot(self) -> dict:
         """Saved sessions merged with live tmux windows (live-but-unsaved and saved-but-stopped included)."""
@@ -1861,19 +1882,25 @@ async def api_update_session(req):
 
 
 async def api_delete_session(req):
-    """Delete: close the tmux window (ends claude) and forget the saved record."""
+    """Delete: close the tmux window (ends claude) and forget the saved record.
+    "ask" host without its connection: it leaves the list at once and is closed on the host at the next unlock
+    (closing needs the connection; asking the password just to close it was a dead end)."""
     b, name = B(req), name_of(req)
     live = next((w for w in b.windows if w["name"] == name), None)
-    if live:
+    later = b.locked()
+    if live and not later:
         await b.tmux("kill-window", "-t", live["id"], check=True)
     s = b.load_sessions()
     old = s["sessions"].pop(name, None)
     s["hidden"] = [n for n in s.get("hidden", []) if n != name]
+    if later and (live or (old or {}).get("key")):
+        s.setdefault("close_later", []).append({"id": (live or {}).get("id"), "name": name, "key": (old or {}).get("key")})
+        b.windows = [w for w in b.windows if w["name"] != name]
     b.save_sessions(s)
     b.activity.pop(name, None)
-    if (old or {}).get("key"):
+    if (old or {}).get("key") and not later:
         await b.sh('rm -f "$HOME/.devbox/claude/$1.json"', old["key"])
-    b.user.log.write("session.delete", host=b.id, name=name)
+    b.user.log.write("session.delete", host=b.id, name=name, **({"on_unlock": True} if later else {}))
     await b.poll_once()
     return web.json_response(b.snapshot())
 
@@ -2445,7 +2472,7 @@ async def term_buffer(req, ws, u, b, tsess: str, wid: str, cols: int, rows: int,
             await ctl(f"send-keys -t {st['pane']} -H " + " ".join(f"{c:02x}" for c in data[i:i + 2048]))
 
     u.log.write("term.open", host=b.id, target=wid or "-", view=view, device=device, ip=req.remote,
-                size=f"{cols}x{rows}", mode="buffer")
+                size=f"{cols}x{rows}", mode="buffer", **reconnect_info(req))
     if not WID_RE.fullmatch(wid):
         st["shown"] = (await b.tmux("display-message", "-p", "-t", f"={tsess}:", "#{window_id}")).strip()
     await take_size()  # a device that opens the window gets it, like a tmux client attaching
@@ -2532,7 +2559,7 @@ async def term_buffer(req, ws, u, b, tsess: str, wid: str, cols: int, rows: int,
         TERM_SOCKETS.discard(ws)
         ended = "restart" if SHUTTING_DOWN else "process" if pump_task.done() else "browser"
         u.log.write("term.close", host=b.id, target=wid or "-", view=view, device=device, by=ended,
-                    ws_code=ws.close_code, secs=round(time.monotonic() - t0), mode="buffer")
+                    ws_code=ws.close_code, why=close_why(ws), secs=round(time.monotonic() - t0), mode="buffer")
         if b.size_owner.get(st["shown"]) == view:
             b.size_owner.pop(st["shown"], None)
         reader_task.cancel()
@@ -2551,6 +2578,28 @@ async def term_buffer(req, ws, u, b, tsess: str, wid: str, cols: int, rows: int,
 
 
 TERM_SOCKETS: set = set()
+# Server ping after 60 s without traffic, then 30 s for the pong (aiohttp waits heartbeat/2). The browser pings
+# every 20 s while in view, so this only fires for a silent/hidden tab; at 30 s (15 s wait) short VPN stalls
+# were cut as 1006 although the connection would have recovered.
+WS_HEARTBEAT = 60
+
+
+def close_why(ws) -> str:
+    """Why the socket ended, beyond the close code: 1006 is both "network gone" and "no pong in time"."""
+    e = ws.exception()
+    if e is None:
+        return "-"
+    if isinstance(e, asyncio.TimeoutError):
+        return "no-pong"
+    return type(e).__name__
+
+
+def reconnect_info(req) -> dict:
+    """The browser's side of the previous drop: close code it saw, tab hidden at that moment, seconds until back."""
+    q = req.query
+    if "re" not in q:
+        return {}
+    return {"re": q["re"][:12], "re_hidden": q.get("re_hidden", "")[:1], "re_gap": q.get("re_gap", "")[:6]}
 SHUTTING_DOWN = False
 
 
@@ -2583,7 +2632,7 @@ async def ws_term(req):
 
 async def _ws_term(req):
     u, b = U(req), B(req)
-    ws = web.WebSocketResponse(heartbeat=30, max_msg_size=4 * 1024 * 1024)
+    ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT, max_msg_size=4 * 1024 * 1024)
     await ws.prepare(req)
     TERM_SOCKETS.add(ws)
     wid = req.query.get("window", "")
@@ -2668,7 +2717,7 @@ async def _ws_term(req):
     ua = req.headers.get("User-Agent", "")
     device = "mobile" if re.search(r"Mobi|Android|iPhone|iPad", ua) else "desktop"
     u.log.write("term.open", host=b.id, target="shell" if shell_mode else wid or "-", view=view, device=device,
-                ip=req.remote, size=f"{cols}x{rows}")
+                ip=req.remote, size=f"{cols}x{rows}", **reconnect_info(req))
     shown = wid  # the window this view shows (changes with "select")
 
     wheel = {"at": 0.0, "on": False}
@@ -2747,7 +2796,7 @@ async def _ws_term(req):
         TERM_SOCKETS.discard(ws)
         ended = "restart" if SHUTTING_DOWN else "process" if pump_task.done() else "browser"
         u.log.write("term.close", host=b.id, target="shell" if shell_mode else wid or "-", view=view, device=device,
-                    by=ended, ws_code=ws.close_code, rc=proc.returncode, secs=round(time.monotonic() - t0))
+                    by=ended, ws_code=ws.close_code, why=close_why(ws), rc=proc.returncode, secs=round(time.monotonic() - t0))
         pump_task.cancel()
         loop.remove_reader(master)
         try:

@@ -205,3 +205,21 @@ def test_ask_host_stays_open_while_a_page_is_in_view(console):
         time.sleep(0.5)
     assert short(console.ok("GET", "/api/hosts")["hosts"])["held"]["locked"], "tab hidden / closed: connection closes"
     console.ok("DELETE", "/api/hosts/held")
+
+
+def test_ask_host_shell_closes_without_password(console):
+    """A shell of a locked "ask" host can be closed: it leaves the list at once and ends on the host at the next
+    unlock (closing it must not ask for the password: cancelling that dialog left no way out)."""
+    console.ok("POST", "/api/hosts", {"label": "Shut", "hostname": "fakehost", "username": "shut", "auth": "ask",
+                                      "password": "secret"})
+    r = console.ok("POST", "/api/shells?host=shut", {})
+    name, wid = r["name"], r["created"]
+    console.ok("POST", "/api/hosts/shut/lock")
+    st, body = console.call("DELETE", f"/api/sessions/{name}?host=shut")
+    assert st == 200, body
+    assert name not in [w["name"] for w in body["windows"]], "gone from the list while locked"
+    assert name not in [w["name"] for w in console.ok("GET", "/api/windows?host=shut")["windows"]]
+    r = console.ok("POST", "/api/hosts/shut/unlock", {"password": "secret"})
+    wins = console.ok("GET", "/api/windows?host=shut&refresh=1")["windows"]
+    assert wid not in [w["id"] for w in wins] and name not in [w["name"] for w in wins], "closed on the host after unlock"
+    console.ok("DELETE", "/api/hosts/shut")

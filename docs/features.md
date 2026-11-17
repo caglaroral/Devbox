@@ -19,7 +19,8 @@ corner shows the console version and build commit, e.g. `devbox v0.7.6 · 3f2c1a
     console page is in view (browse freely) and closes when the tab is hidden (another tab, minimised, phone screen
     off) or closed — then the next session / shell asks again. tmux (and claude
     for a claude session) are checked at that moment; if missing, the session/shell is not opened and the error
-    says what is missing. While locked the last known sessions stay listed. Switching a key host to this mode
+    says what is missing. While locked the last known sessions stay listed; closing a shell / deleting a
+    session then needs no password (it leaves the list and ends on the host at the next unlock). Switching a key host to this mode
     can also remove the console's key from the host's `authorized_keys`.
   - **Password, saved in Vault**: only for hosts that don't allow key login.
   - **Private key** (pasted, kept in Vault) or **Manual** (you add the console's public key yourself).

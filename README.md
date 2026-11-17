@@ -40,6 +40,8 @@ pip install -r requirements-dev.txt
 pytest                                   # tmux gerekir
 ```
 
+Testleri **root olarak çalıştırmayın**: root'ta konsol alt süreçlere standart PATH verir, test tmux sarmalayıcısı atlanır ve gerçek tmux sunucusu kullanılır (conftest bunu reddeder). Root olmayan bir kullanıcıyla: `runuser -u <kullanıcı> -- .venv/bin/pytest`.
+
 | Dosya | Kapsam |
 |---|---|
 | `tests/test_status.py` | Durum noktası sezgisi (çalışıyor / onay bekliyor / boşta) |

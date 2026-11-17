@@ -46,6 +46,9 @@ The compose file mounts `/etc/localtime` so log times use the host's timezone.
 - Event log per user: `<data>/users/<name>/logs/YYYYMMDD.log` (Settings → Event log). It survives rebuilds;
   `docker logs` does not.
 - `docker logs devbox-console-1` has the same lines prefixed with the user, plus startup messages.
+- Disconnects: `term.close … ws_code=1006 why=no-pong` = the server's heartbeat (ping after 60 s of silence, 30 s
+  for the pong) gave up; `why=-` with 1006 = the connection vanished without a close frame (network / VPN / NAT).
+  The next `term.open` of that browser has `re=<code the browser saw> re_hidden=<tab hidden then> re_gap=<s>`.
 
 ## Tests
 

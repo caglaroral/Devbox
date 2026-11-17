@@ -204,18 +204,24 @@ term.textarea?.addEventListener("focus", () => claimSize());
 /* A socket can look open while it is dead (phone slept, laptop resumed): the terminal just freezes until the
    server's heartbeat gives up. When the tab comes back, ping it and reconnect at once if there is no answer. */
 let pongTimer = null;
-function checkAlive() {
+// how the previous socket ended, sent with the next connect so the console log shows the browser's side too
+let lastDrop = null;
+function checkAlive(wait = 5000) {
   if (!ws || ws.readyState !== 1 || pongTimer) return;
   const sock = ws;
   wsSend({ t: "ping" });
   pongTimer = setTimeout(() => {
     pongTimer = null;
-    if (ws !== sock) return;
+    if (ws !== sock || document.hidden) return; // hidden: timers are throttled, check again when it is back
+    lastDrop = { code: "nopong", hidden: 0, at: Date.now() };
     ws.onclose = null; try { ws.close(); } catch {}
     ws = null; wsRetry = 0;
     if (wsWanted && isTermRoute()) connect();
-  }, 2500);
+  }, wait);
 }
+/* Keepalive: VPNs / NATs drop connections that look idle, and a dead socket is only noticed on the next
+   keystroke. A small ping every 20 s keeps the path warm and finds a dead socket within ~30 s. */
+setInterval(() => { if (!document.hidden) checkAlive(10000); }, 20000);
 
 function connect() {
   if (ws && ws.readyState <= 1) return;
@@ -228,13 +234,14 @@ function connect() {
   term.options.scrollback = wsBuf ? bufferLines() : 2000;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const q = new URLSearchParams({ cols: term.cols, rows: term.rows, ...(shell ? { shell: "1" } : { window: w.id }),
-                                  ...(wsBuf ? { mode: "buffer", lines: bufferLines() } : {}) });
+                                  ...(wsBuf ? { mode: "buffer", lines: bufferLines() } : {}),
+                                  ...(lastDrop ? { re: lastDrop.code, re_hidden: lastDrop.hidden, re_gap: Math.round((Date.now() - lastDrop.at) / 1000) } : {}) });
   wsKind = shell ? "shell" : "tmux";
   wsSess = shell ? null : w.tmux_session;
   overlay("Connecting…");
   ws = new WebSocket(`${proto}://${location.host}${withHost(`/ws/term?${q}`)}`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { if (restarting) { restarting = 0; checkVersion(); } wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
+  ws.onopen = () => { lastDrop = null; if (restarting) { restarting = 0; checkVersion(); } wsRetry = 0; overlay(null); term.reset(); wsSend({ t: "resize", c: term.cols, r: term.rows }); lastClaim = 0; setTimeout(claimSize, 300); if (!isTouch()) term.focus(); };
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {
       if (ev.data === "pong") { clearTimeout(pongTimer); pongTimer = null; }
@@ -254,10 +261,11 @@ function connect() {
   ws.onclose = (ev) => {
     ws = null;
     if (!wsWanted) return;
+    lastDrop ||= { code: ev.code, hidden: document.hidden ? 1 : 0, at: Date.now() }; // the first close, not the retries
     // 1012 = the console is restarting (deploy): sessions keep running in tmux, it is back in seconds
     if (ev.code === 1012) restarting = Date.now();
     const fast = restarting && Date.now() - restarting < 90000;
-    const delay = fast ? 1000 : Math.min(1000 * 2 ** wsRetry++, 15000);
+    const delay = fast ? 1000 : Math.min(500 * 2 ** wsRetry++, 5000); // short drops (VPN, Wi-Fi) come back fast
     overlay(fast ? "Console is restarting (update) — your session keeps running, reconnecting…"
                  : `Disconnected — retrying in ${Math.round(delay / 1000)} s`);
     setTimeout(() => { if (wsWanted && isTermRoute()) connect(); }, delay);
@@ -2031,7 +2039,7 @@ document.addEventListener("visibilitychange", () => {
   if (isTermRoute() && !ws) connect();
   else { checkAlive(); claimSize(); }
 });
-window.addEventListener("online", () => { if (isTermRoute()) (ws ? checkAlive() : connect()); });
+window.addEventListener("online", () => { wsRetry = 0; if (isTermRoute()) (ws ? checkAlive() : connect()); });
 
 (async function init() {
   const m = location.hash.match(/^#\/h\/([^/]+)/);

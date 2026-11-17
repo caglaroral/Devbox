@@ -24,6 +24,11 @@ REAL_TMUX = shutil.which("tmux")
 
 if not REAL_TMUX:
     pytest.exit("tmux is required for the tests", returncode=3)
+# As root the console gives its local processes the standard PATH (spawn_kw), so the tmux wrapper with the test
+# socket is skipped and the tests drive the machine's real tmux server (they killed / respawned real windows).
+if os.geteuid() == 0:
+    pytest.exit("do not run the tests as root: the console would use the real tmux server "
+                "(e.g. runuser -u <user> -- .venv/bin/pytest)", returncode=3)
 
 
 def free_port() -> int:
