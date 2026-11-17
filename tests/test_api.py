@@ -142,3 +142,17 @@ def test_devbox_msg_cli_is_public(console):
 
 def test_logout(console):
     assert console.call("POST", "/api/logout")[0] == 200
+
+
+def test_static_files_are_not_reused_after_a_deploy(console):
+    """The page asks for app.js / app.css with the build in the URL, and static files are revalidated: a browser
+    must not keep running the previous app.js after a deploy (it did, for hours)."""
+    import urllib.request
+    from devbox_console import __version__
+    req = urllib.request.Request(console.url + "/", headers={"Cookie": console.cookie})
+    with urllib.request.urlopen(req) as r:
+        html = r.read().decode()
+        assert r.headers["Cache-Control"] == "no-cache"
+    assert f'/static/app.js?v={__version__}-' in html and f'/static/app.css?v={__version__}-' in html
+    with urllib.request.urlopen(console.url + f"/static/app.js?v={__version__}-x") as r:
+        assert r.headers["Cache-Control"] == "no-cache" and r.headers.get("ETag")

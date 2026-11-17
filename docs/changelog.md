@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.1
+- Fix: after a deploy the browser could keep running the previous `app.js` for hours (static files had no
+  `Cache-Control`, so browsers reused them without asking). The page now loads `app.js` / `app.css` with the
+  build in the URL, and static files are always revalidated.
+
 ## v0.9.0
 - "Ask" hosts: a shell (or session) can be **closed without the password** while the host is locked: it leaves
   the list at once and ends on the host at the next unlock (the password dialog on close was a dead end).

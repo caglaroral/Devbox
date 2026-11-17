@@ -1280,7 +1280,11 @@ PUBLIC_PATHS = {"/login", "/api/login", "/api/whoami", "/devbox-msg"}
 @web.middleware
 async def auth_mw(req: web.Request, handler):
     p = req.path
-    if p in PUBLIC_PATHS or p.startswith("/static/"):
+    if p.startswith("/static/"):
+        resp = await handler(req)
+        resp.headers["Cache-Control"] = "no-cache"  # always revalidate (ETag: a 304 when unchanged)
+        return resp
+    if p in PUBLIC_PATHS:
         return await handler(req)
     auth = req.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
@@ -1332,7 +1336,12 @@ def name_of(req) -> str:
 
 
 async def index(req):
-    return web.FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+    # app.js / app.css carry the build in their URL: a browser that kept the previous file cannot run it
+    # the new one after a deploy (without Cache-Control browsers reused a file unchanged for days, for hours)
+    tag = f"{__version__}-{COMMIT or int(STATIC.joinpath('app.js').stat().st_mtime)}"
+    html = (STATIC / "index.html").read_text().replace('"/static/app.js"', f'"/static/app.js?v={tag}"') \
+        .replace('"/static/app.css"', f'"/static/app.css?v={tag}"')
+    return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 async def devbox_msg(req):
