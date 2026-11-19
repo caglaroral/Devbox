@@ -126,6 +126,8 @@ you should look at on their own line, so they can be clicked.
   nothing). Selectable screen text: **Select** on the key bar or ⋯ → *Screen text*.
 - The phone keyboard's autocorrect does not cause erase-and-retype at spaces (the console sends only the real
   difference). **✎ Type** opens a normal text box (autocorrect, dictation) and sends it at once.
+- Opening or closing the keyboard is instant: the terminal keeps its size and slides up so the prompt line
+  sits above the keyboard (the top rows are hidden meanwhile); the session is not resized or redrawn.
 
 ## Settings
 

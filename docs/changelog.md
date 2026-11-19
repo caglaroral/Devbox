@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.2
+- Phone: opening / closing the keyboard is instant. The terminal no longer resizes the session for it (a round
+  trip and a full claude redraw each time); it keeps its size and shows its bottom rows above the keyboard.
+
 ## v0.9.1
 - Fix: after a deploy the browser could keep running the previous `app.js` for hours (static files had no
   `Cache-Control`, so browsers reused them without asking). The page now loads `app.js` / `app.css` with the

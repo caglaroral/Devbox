@@ -336,8 +336,28 @@ if (isTouch() && term.textarea) {
 }
 term.onBinary((d) => wsSend({ t: "bin", d: btoa(d) }));
 
+// Phone keyboard: it shrinks the page (interactive-widget=resizes-content). Resizing the pane for it costs a
+// round trip and a full claude redraw each time the keyboard opens or closes, so the terminal keeps its size
+// and is pinned to the bottom of the shrunken box instead: the prompt line stays above the keyboard and the
+// top rows are clipped until it closes. Rotation (a width change) or a taller box resets the full size.
+let fullW = 0, fullH = 0, fullTermH = 0;
+function keyboardPin() {
+  const wrap = $("#termWrap"), el = $("#term");
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (!isTouch() || !w || !h) return false;
+  const a = document.activeElement;
+  const typing = a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT") && wrap.contains(a);
+  const kb = typing && w === fullW && h < fullH - 100;
+  wrap.classList.toggle("kb", kb);
+  if (kb) { el.style.height = fullTermH + "px"; return true; }
+  el.style.height = "";
+  fullW = w; fullH = h; fullTermH = el.clientHeight;
+  return false;
+}
+
 let resizeTimer;
 new ResizeObserver(() => {
+  if (keyboardPin()) { clearTimeout(resizeTimer); return; }
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (!isTermRoute()) return;

@@ -56,11 +56,29 @@ fs.mkdirSync(OUT, { recursive: true });
 
   // ---- mobile (iPhone-ish)
   const m = await ctx({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, tag: "mobile" });
+  const resizes = [];
+  m.on("websocket", (w) => w.on("framesent", (f) => { if (String(f.payload).includes('"resize"')) resizes.push(f.payload); }));
   await m.goto(U + "/#/h/local/sessions"); await m.waitForTimeout(1500);
   await shot(m, "m1-sessions");
   await m.click(".view.active [data-menu]"); await shot(m, "m2-drawer-tree");
   await m.click('#hostList li.sess[data-host="gpu-box"][data-name="trainer"]'); await m.waitForTimeout(2500);
   await shot(m, "m3-term");
+  // phone keyboard: the page shrinks but the pane is not resized; the terminal is pinned to the bottom
+  resizes.length = 0;
+  await m.focus("#term textarea");
+  await m.setViewportSize({ width: 390, height: 500 }); await m.waitForTimeout(600);
+  const kb = await m.evaluate(() => {
+    const w = document.querySelector("#termWrap").getBoundingClientRect(), t = document.querySelector("#term").getBoundingClientRect();
+    return { pinned: document.querySelector("#termWrap").classList.contains("kb"), gap: Math.round(w.bottom - t.bottom) };
+  });
+  await shot(m, "m3b-keyboard");
+  const resizedOpen = resizes.length;
+  await m.setViewportSize({ width: 390, height: 844 }); await m.waitForTimeout(600);
+  const unpinned = await m.evaluate(() => !document.querySelector("#termWrap").classList.contains("kb"));
+  console.log("keyboard:", JSON.stringify(kb), "resizes while open:", resizedOpen, "unpinned after:", unpinned);
+  if (!kb.pinned || Math.abs(kb.gap) > 1) errors.push(`keyboard: terminal not pinned to the bottom ${JSON.stringify(kb)}`);
+  if (resizedOpen) errors.push(`keyboard: pane resized ${resizedOpen}x while the keyboard was open`);
+  if (!unpinned) errors.push("keyboard: still pinned after it closed");
   await m.click('#keybar [data-action="manage"]'); await shot(m, "m4-manage");
   await m.keyboard.press("Escape");
   await m.goto(U + "/#/h/local/sessions"); await m.waitForTimeout(1200);
