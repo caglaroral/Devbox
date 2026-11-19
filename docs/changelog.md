@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.9.3
+- Phone keyboard: the terminal slides up to the **last used row** (the prompt and claude's status line), not to
+  the bottom of the screen, so a half-empty screen no longer leaves blank rows between the prompt and the keyboard.
+  The "Sized for a bigger screen" note no longer shows while the keyboard is open.
+- Key bar: **⏎ Enter** moved next to Esc (it was off screen on a phone); **Ctrl** brings up the keyboard when it is
+  closed (for the letter that follows).
+- Fix: on a phone, opening another session could leave the terminal throwing errors on every frame (xterm computed
+  a NaN scroll position while the terminal page was hidden); such scroll requests are now ignored.
+
 ## v0.9.2
 - Phone: opening / closing the keyboard is instant. The terminal no longer resizes the session for it (a round
   trip and a full claude redraw each time); it keeps its size and shows its bottom rows above the keyboard.

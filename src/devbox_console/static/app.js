@@ -185,6 +185,7 @@ window.addEventListener("focus", () => claimSize());
 // and let a click/tap take the size back.
 function updateSizeBar() {
   const bar = $("#sizeBar"), w = S.route === "term" ? cur() : null;
+  if ($("#termWrap").classList.contains("kb")) return bar.classList.add("hidden"); // keyboard open: size is kept on purpose
   let have = w && { cols: w.width, rows: w.height }, mine = { cols: term.cols, rows: term.rows };
   if (isBuf()) { have = paneSize; mine = wantDims(); }
   const off = w?.running && have?.cols && ws && wsKind === "tmux" && (have.cols !== mine.cols || Math.abs(have.rows - mine.rows) > 1);
@@ -337,22 +338,42 @@ if (isTouch() && term.textarea) {
 term.onBinary((d) => wsSend({ t: "bin", d: btoa(d) }));
 
 // Phone keyboard: it shrinks the page (interactive-widget=resizes-content). Resizing the pane for it costs a
-// round trip and a full claude redraw each time the keyboard opens or closes, so the terminal keeps its size
-// and is pinned to the bottom of the shrunken box instead: the prompt line stays above the keyboard and the
-// top rows are clipped until it closes. Rotation (a width change) or a taller box resets the full size.
-let fullW = 0, fullH = 0, fullTermH = 0;
+// round trip and a full claude redraw each time the keyboard opens or closes, so the terminal keeps its size and
+// slides up instead: the last used row (the cursor, or text below it such as claude's status line) sits just above
+// the keyboard; the rows above it are clipped and the empty rows below it are hidden until the keyboard closes.
+// The full size is taken only while not typing (or when the box grows / turns), never mid-animation.
+let fullW = 0, fullH = 0, fullTermH = 0, pinRaf = 0;
+function lastUsedRow() {
+  const b = term.buffer.active;
+  let last = b.cursorY;
+  for (let y = term.rows - 1; y > last; y--) {
+    if (b.getLine(b.viewportY + y)?.translateToString(true).trim()) { last = y; break; }
+  }
+  return b.viewportY < b.baseY ? term.rows - 1 : last; // scrolled back: show the bottom of what is on screen
+}
+function pinShift() {
+  const wrap = $("#termWrap"), el = $("#term");
+  if (!wrap.classList.contains("kb")) return;
+  const screen = el.querySelector(".xterm-screen");
+  const cellH = screen ? screen.offsetHeight / term.rows : 0;
+  const used = (screen ? screen.offsetTop : 0) + (lastUsedRow() + 1) * cellH + 4;
+  const room = fullTermH - wrap.clientHeight;  // how far it can go down before a gap opens at the top
+  el.style.bottom = -Math.max(0, Math.min(room, fullTermH - used)) + "px";
+}
+const pinLater = () => { if (!pinRaf && $("#termWrap").classList.contains("kb")) pinRaf = requestAnimationFrame(() => { pinRaf = 0; pinShift(); }); };
+term.onWriteParsed(pinLater); term.onCursorMove(pinLater);
 function keyboardPin() {
   const wrap = $("#termWrap"), el = $("#term");
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (!isTouch() || !w || !h) return false;
   const a = document.activeElement;
-  const typing = a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT") && wrap.contains(a);
-  const kb = typing && w === fullW && h < fullH - 100;
+  const typing = !!a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT") && wrap.contains(a);
+  const kb = typing && w === fullW && h < fullH - 60;
   wrap.classList.toggle("kb", kb);
-  if (kb) { el.style.height = fullTermH + "px"; return true; }
-  el.style.height = "";
-  fullW = w; fullH = h; fullTermH = el.clientHeight;
-  return false;
+  if (kb) { el.style.height = fullTermH + "px"; $("#sizeBar").classList.add("hidden"); pinShift(); return true; }
+  el.style.height = ""; el.style.bottom = "";
+  if (!typing || w !== fullW || h >= fullH) { fullW = w; fullH = h; fullTermH = el.clientHeight; }
+  return typing && w === fullW && h < fullH;  // keyboard still sliding in: no pane resize for that either
 }
 
 let resizeTimer;
@@ -534,6 +555,15 @@ function updateJump() {
   btn.textContent = newWhileUp ? "↓ New output" : "↓ Jump to bottom";
   btn.classList.toggle("new", newWhileUp);
 }
+// xterm 5.5's viewport can ask to scroll by NaN lines (its row height is 0 while the terminal is hidden, e.g. on
+// another page); the position then stays NaN and every later frame fails in the WebGL renderer ("reading
+// 'loadCell'"). Ignore such requests (private API of the pinned xterm version; skipped if it is not there).
+(() => {
+  const bs = term._core?._bufferService;
+  if (!bs || typeof bs.scrollLines !== "function") return;
+  const scrollLines = bs.scrollLines.bind(bs);
+  bs.scrollLines = (n, ...rest) => (Number.isFinite(n) ? scrollLines(n, ...rest) : undefined);
+})();
 term.onScroll(updateJump);
 term.onWriteParsed(() => {
   const b = term.buffer.active;
@@ -548,7 +578,11 @@ function setCtrl(on) { ctrlArmed = on; $("#ctrlKey").classList.toggle("on", on);
 $("#keybar").addEventListener("pointerdown", (e) => e.preventDefault()); // keep the soft keyboard open
 $("#keybar").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.mod === "ctrl") return setCtrl(!ctrlArmed);
+  if (b.dataset.mod === "ctrl") {  // armed: the next letter is sent as Ctrl+letter, so bring up the keyboard for it
+    setCtrl(!ctrlArmed);
+    if (ctrlArmed && document.activeElement !== term.textarea) term.focus();
+    return;
+  }
   const k = b.dataset.key, a = b.dataset.action;
   const local = S.route === "shell" || (isBuf() && term.buffer.active.type === "normal");
   if (k === "pgup") return local ? term.scrollPages(-1) : wsSend({ t: "scroll", page: 1 });

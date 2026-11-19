@@ -120,14 +120,15 @@ you should look at on their own line, so they can be clicked.
 
 ### Phone
 
-- Tap the terminal for the keyboard; the key bar has Esc, Tab, Ctrl, arrows, Enter, ^C, ⇧Tab, PgUp/PgDn,
+- Tap the terminal for the keyboard; the key bar has Esc, ⏎ Enter, Tab, Ctrl (opens the keyboard too), arrows, ^C, ⇧Tab, PgUp/PgDn,
   Select, Paste, 📎, ✎ Type, ⋯.
 - Swipe to scroll, flick for momentum, pinch to change the font size; a short tap opens the keyboard (holding does
   nothing). Selectable screen text: **Select** on the key bar or ⋯ → *Screen text*.
 - The phone keyboard's autocorrect does not cause erase-and-retype at spaces (the console sends only the real
   difference). **✎ Type** opens a normal text box (autocorrect, dictation) and sends it at once.
-- Opening or closing the keyboard is instant: the terminal keeps its size and slides up so the prompt line
-  sits above the keyboard (the top rows are hidden meanwhile); the session is not resized or redrawn.
+- Opening or closing the keyboard is instant: the terminal keeps its size and slides up so its last used row
+  (the prompt, claude's status line) sits just above the keyboard (rows above are hidden meanwhile); the session
+  is not resized or redrawn.
 
 ## Settings
 
