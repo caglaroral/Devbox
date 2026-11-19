@@ -120,8 +120,8 @@ you should look at on their own line, so they can be clicked.
 
 ### Phone
 
-- Tap the terminal for the keyboard; the key bar has Esc, ⏎ Enter, Tab, Ctrl (opens the keyboard too), arrows, ^C, ⇧Tab, PgUp/PgDn,
-  Select, Paste, 📎, ✎ Type, ⋯.
+- Tap the terminal for the keyboard. The key bar has two rows: Esc, ⏎ Enter, Tab, Ctrl (opens the keyboard too),
+  ^C, ⇧Tab, ⋯, Select, Paste, 📎, ✎ Type on top (swipe it sideways for the rest); arrows and PgUp/PgDn below.
 - Swipe to scroll, flick for momentum, pinch to change the font size; a short tap opens the keyboard (holding does
   nothing). Selectable screen text: **Select** on the key bar or ⋯ → *Screen text*.
 - The phone keyboard's autocorrect does not cause erase-and-retype at spaces (the console sends only the real

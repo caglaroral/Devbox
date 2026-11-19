@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.4
+- Phone key bar in **two rows**: special keys on top (Esc, ⏎ Enter, Tab, Ctrl, ^C, ⇧Tab, ⋯, then Select, Paste, 📎,
+  ✎ Type sideways), arrows and PgUp / PgDn below, all in view.
+- Android: no empty band under the key bar (Firefox reported the system navigation bar as a safe-area inset).
+
 ## v0.9.3
 - Phone keyboard: the terminal slides up to the **last used row** (the prompt and claude's status line), not to
   the bottom of the screen, so a half-empty screen no longer leaves blank rows between the prompt and the keyboard.

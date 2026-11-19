@@ -63,23 +63,27 @@
         <button id="jumpBottom" class="hidden" title="Back to the latest output">↓ Jump to bottom</button><div id="term"></div><div id="termOverlay" class="hidden"></div><div id="dropHint">Drop files to send them to this session</div></div>
       <input type="file" id="attachInput" multiple hidden>
       <div id="keybar">
-        <button data-key="esc">Esc</button>
-        <button data-key="enter" title="Enter">⏎ Enter</button>
-        <button data-key="tab">Tab</button>
-        <button data-mod="ctrl" id="ctrlKey">Ctrl</button>
-        <button data-key="up">↑</button>
-        <button data-key="down">↓</button>
-        <button data-key="left">←</button>
-        <button data-key="right">→</button>
-        <button data-key="ctrlc">^C</button>
-        <button data-key="shifttab">⇧Tab</button>
-        <button data-key="pgup">PgUp</button>
-        <button data-key="pgdn">PgDn</button>
-        <button data-action="select">Select</button>
-        <button data-action="paste">Paste</button>
-        <button data-action="attach" title="Attach files">📎</button>
-        <button data-action="compose">✎ Type</button>
-        <button data-action="manage">⋯</button>
+        <div class="krow">
+          <button data-key="esc">Esc</button>
+          <button data-key="enter" title="Enter">⏎ Enter</button>
+          <button data-key="tab">Tab</button>
+          <button data-mod="ctrl" id="ctrlKey">Ctrl</button>
+          <button data-key="ctrlc">^C</button>
+          <button data-key="shifttab">⇧Tab</button>
+          <button data-action="manage">⋯</button>
+          <button data-action="select">Select</button>
+          <button data-action="paste">Paste</button>
+          <button data-action="attach" title="Attach files">📎</button>
+          <button data-action="compose">✎ Type</button>
+        </div>
+        <div class="krow nav">
+          <button data-key="left">←</button>
+          <button data-key="up">↑</button>
+          <button data-key="down">↓</button>
+          <button data-key="right">→</button>
+          <button data-key="pgup">PgUp</button>
+          <button data-key="pgdn">PgDn</button>
+        </div>
       </div>
     </section>
 

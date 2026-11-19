@@ -127,9 +127,15 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .xterm-viewport::-webkit-scrollbar { width: 8px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
 
-#keybar { display: none; gap: 6px; padding: 6px 8px; overflow-x: auto; background: var(--bg-subtle);
-  border-top: 1px solid var(--border); padding-bottom: max(6px, env(safe-area-inset-bottom)); scrollbar-width: none; }
-#keybar::-webkit-scrollbar { display: none; }
+/* phone key bar: special keys on top (scrolls sideways), arrows + paging below */
+#keybar { display: none; flex-direction: column; gap: 6px; padding: 6px 8px; background: var(--bg-subtle);
+  border-top: 1px solid var(--border); padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+/* Android browsers draw the page above the system navigation bar, yet some (Firefox) still report its height as a
+   safe-area inset: that left an empty band under the keys */
+.android #keybar { padding-bottom: 6px; }
+#keybar .krow { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+#keybar .krow::-webkit-scrollbar { display: none; }
+#keybar .krow.nav button { flex: 1 1 0; min-width: 0; }
 #keybar button { flex: none; min-width: 44px; height: 36px; background: var(--btn-bg); color: var(--fg);
   border: 1px solid var(--btn-border); border-radius: 6px; font: 500 13px var(--mono); touch-action: manipulation; }
 #keybar button:active, #keybar button.on { background: var(--accent); color: #fff; }

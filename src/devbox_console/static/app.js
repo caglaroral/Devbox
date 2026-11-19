@@ -10,6 +10,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const isMobile = () => matchMedia("(max-width: 820px)").matches;
 const isTouch = () => matchMedia("(pointer: coarse)").matches;
+document.documentElement.classList.toggle("android", /Android/i.test(navigator.userAgent));
 const isTermRoute = () => S.route === "term" || S.route === "shell";
 
 const S = {

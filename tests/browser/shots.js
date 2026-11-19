@@ -99,6 +99,15 @@ fs.mkdirSync(OUT, { recursive: true });
   await m.goto(U + "/#/h/local/sessions"); await m.waitForTimeout(1000);
   await m.click(".view.active [data-menu]"); await m.waitForTimeout(300);
   await m.click('#hostList li.sess[data-host="gpu-box"][data-name="trainer"]'); await m.waitForTimeout(2000);
+  // key bar: two rows; the arrows and paging keys all fit on the second one, Esc / Enter / Ctrl show on the first
+  const kbar = await m.evaluate(() => {
+    const vis = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return r.width > 0 && r.right <= innerWidth + 1; };
+    return { rows: document.querySelectorAll("#keybar .krow").length,
+             nav: [...document.querySelectorAll("#keybar .krow.nav button")].every((b) => { const r = b.getBoundingClientRect(); return r.width >= 40 && r.right <= innerWidth + 1; }),
+             top: ["esc", "enter"].every((k) => vis(`#keybar [data-key="${k}"]`)) && vis("#ctrlKey") };
+  });
+  console.log("key bar:", JSON.stringify(kbar));
+  if (kbar.rows !== 2 || !kbar.nav || !kbar.top) errors.push(`key bar layout ${JSON.stringify(kbar)}`);
   // Ctrl on the key bar with the keyboard closed: it brings the keyboard up for the letter that follows
   await m.evaluate(() => document.activeElement?.blur());
   await m.click("#ctrlKey");
