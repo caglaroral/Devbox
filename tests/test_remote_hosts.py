@@ -223,3 +223,17 @@ def test_ask_host_shell_closes_without_password(console):
     wins = console.ok("GET", "/api/windows?host=shut&refresh=1")["windows"]
     assert wid not in [w["id"] for w in wins] and name not in [w["name"] for w in wins], "closed on the host after unlock"
     console.ok("DELETE", "/api/hosts/shut")
+
+
+def test_delete_host_removes_its_records(console):
+    console.ok("POST", "/api/hosts", {"label": "Gone", "hostname": "fakehost", "username": "dev", "password": "secret"})
+    (console.remote_home / "p").mkdir(exist_ok=True)
+    console.ok("POST", "/api/sessions?host=gone", {"name": "g1", "display": "G", "cwd": "~/p"})
+    box = console.data / "users" / console.user / "boxes" / "gone"
+    assert (box / "sessions.json").exists()
+    console.ok("DELETE", "/api/hosts/gone")
+    assert not box.exists(), "deleting a host deletes its session records too"
+    r = console.ok("POST", "/api/hosts", {"label": "Gone", "hostname": "fakehost", "username": "dev", "password": "secret"})
+    assert short(r["hosts"])["gone"]
+    saved = json.loads((box / "sessions.json").read_text()) if (box / "sessions.json").exists() else {}
+    assert "g1" not in saved.get("sessions", {}), "re-adding the same host starts without the old records"

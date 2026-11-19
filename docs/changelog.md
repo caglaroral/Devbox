@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.5
+- Deleting a host also deletes its session records (`boxes/<host>/`); re-adding it starts clean. Folders left
+  by hosts deleted earlier are removed at startup.
+
 ## v0.9.4
 - Phone key bar in **two rows**: special keys on top (Esc, ⏎ Enter, Tab, Ctrl, ^C, ⇧Tab, ⋯, then Select, Paste, 📎,
   ✎ Type sideways), arrows and PgUp / PgDn below, all in view.

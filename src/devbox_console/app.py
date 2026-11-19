@@ -44,6 +44,7 @@ import pwd
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import struct
 import subprocess
@@ -947,6 +948,10 @@ class User:
                                                  "public": old_key.with_suffix(".pub").read_text().strip()})
         for f in (old_key, old_key.with_suffix(".pub")):
             f.unlink(missing_ok=True)
+        known = {"local", *(h["id"] for h in self.load_hosts())}
+        for d in (self.dir / "boxes").iterdir():  # leftovers of hosts deleted before drop_box removed them
+            if d.is_dir() and d.name not in known:
+                shutil.rmtree(d, ignore_errors=True)
         for h in self.load_hosts():
             sec = await STORE.get(self.sp("hosts", h["id"])) or {}
             old = self.dir / "ssh" / f"host-{h['id']}.key"
@@ -1177,6 +1182,8 @@ class User:
         b = self.boxes.pop(host_id, None)
         if b:
             b.stop()
+        if host_id != "local":  # its session records and activity go with it (re-adding starts clean)
+            shutil.rmtree(self.dir / "boxes" / host_id, ignore_errors=True)
 
     def hosts_summary(self) -> list[dict]:
         return [b.summary() for b in self.all_boxes()]
