@@ -321,6 +321,7 @@
             <label class="field">Password <input id="hPassword" type="password" autocomplete="new-password" placeholder="used only once"></label>
             <label class="check"><input type="radio" name="hPwMode" id="hPwOnce" checked> <span><b>Add the console's key to authorized_keys</b> — the password is used once to install the console's SSH key in <code>~/.ssh/authorized_keys</code> on the host (not saved); later connections use the key</span></label>
             <label class="check"><input type="radio" name="hPwMode" id="hPwAsk"> <span><b>Ask for the password at every connection</b> — no key on the host, nothing saved; when the connection has to be opened again (console update, network drop, reboot) the host shows 🔒 and waits for the password</span></label>
+            <label class="check"><input type="radio" name="hPwMode" id="hPwBrowser"> <span><b>Save in this browser only</b> — address and password are kept in this browser, encrypted with a PIN; the console keeps nothing about this host on disk and other browsers don't list it. It connects when a session or shell is opened (PIN asked once per visit)</span></label>
             <label class="check hidden" id="hRemoveKeyRow"><input type="checkbox" id="hRemoveKey" checked> <span>Also remove the console's key from <code>authorized_keys</code> on the host</span></label>
             <label class="check"><input type="radio" name="hPwMode" id="hStorePw"> <span>Save the password in Vault and use it for every connection (only for hosts that don't allow key login)</span></label>
           </div>
@@ -380,6 +381,16 @@
     <p class="muted small" id="unlockInfo"></p>
     <label class="field">Password <input id="unlockPw" type="password" autocomplete="off"></label>
     <div class="row-end"><button type="button" class="btn" id="unlockCancel">Cancel</button><button class="btn primary" value="ok" id="unlockOk">Connect</button></div>
+  </form>
+</dialog>
+
+<dialog id="pinDlg">
+  <form method="dialog" id="pinForm">
+    <h2 id="pinTitle">PIN</h2>
+    <p class="muted small" id="pinInfo"></p>
+    <label class="field">PIN <input id="pin1" type="password" autocomplete="off" inputmode="text"></label>
+    <label class="field" id="pin2Row">Repeat <input id="pin2" type="password" autocomplete="off"></label>
+    <div class="row-end"><button type="button" class="btn" id="pinForget">Forgot PIN</button><span class="grow"></span><button type="button" class="btn" id="pinCancel">Cancel</button><button class="btn primary" value="ok" id="pinOk">OK</button></div>
   </form>
 </dialog>
 

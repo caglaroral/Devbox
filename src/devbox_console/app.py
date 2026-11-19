@@ -25,7 +25,7 @@ Statuses come from `tmux capture-pane` every DEVBOX_POLL seconds.
 
 Data (DEVBOX_DATA/users/<user>/):
   settings.json   API keys (env), default command
-  hosts.json      remote hosts
+  hosts.json      remote hosts (not "browser" hosts: those live in one browser, and here only in memory)
   messages.jsonl  Team board (shared by all hosts of the user)
   ssh/            console key + known_hosts
   boxes/<host>/   sessions.json, activity.json (per host)
@@ -393,7 +393,8 @@ class Box:
         self.host = host  # None = this machine, run directly (PAM mode)
         self.id = host["id"] if host else "local"
         self.via_ssh = host is not None  # remote hosts, and "local" in Docker mode
-        self.dir = user.dir / "boxes" / self.id
+        # browser hosts (their address and password live in one browser): nothing about them on disk here
+        self.dir = (user.rt if host and host.get("browser") else user.dir) / "boxes" / self.id
         self.dir.mkdir(parents=True, exist_ok=True)
         self.windows: list[dict] = []
         self.error: str | None = None
@@ -424,6 +425,11 @@ class Box:
         if not self.host:
             return NODENAME
         return self.host.get("label") or self.host.get("hostname")
+
+    def scrub(self, text: str) -> str:
+        """For the log on disk: a browser host's address stays out of it."""
+        h = self.host or {}
+        return text.replace(h["hostname"], "<host>") if h.get("browser") and h.get("hostname") else text
 
     # ---- command execution
     @property
@@ -580,13 +586,13 @@ class Box:
                 self.broadcast("windows", self.snapshot())
                 return
             if self.error != str(e):
-                self.user.log.write("host.unreachable", host=self.id, error=str(e)[:300])
+                self.user.log.write("host.unreachable", host=self.id, error=self.scrub(str(e))[:300])
             self.error = str(e)
             self.windows = []
             self.broadcast("windows", self.snapshot())
             return
         if self.error and self.last_ok:
-            self.user.log.write("host.ok", host=self.id, was=self.error[:300])
+            self.user.log.write("host.ok", host=self.id, was=self.scrub(self.error)[:300])
         self.error = None
         self.last_ok = time.time()
         if rc != 0:  # no tmux server / no session yet: that's simply "no sessions"
@@ -722,7 +728,7 @@ class Box:
                               "hidden": w["hidden"], "external": w["external"], "shell": w["shell"]}
                              for w in self.snapshot()["windows"]],
                 "info": (self.host or {}).get("info", {}), "auth": self.user.host_auth(self.id) if self.via_ssh else "local",
-                "locked": self.locked()}
+                "locked": self.locked(), "browser": bool((self.host or {}).get("browser"))}
 
     def session_env(self) -> dict:
         return {**self.user.session_env(), "DEVBOX_HOST_ID": self.id}
@@ -924,6 +930,7 @@ class User:
         self.token = _read_or_create(self.dir / "api_token", 24)
         self.log = EventLog(self.dir / "logs", name)
         self.boxes: dict[str, Box] = {}
+        self.page_hosts: dict[str, dict] = {}  # browser hosts: kept in memory only, sent again by the browser
         self.host_listeners: set[asyncio.Queue] = set()
         self.msg_lock = asyncio.Lock()
         self.env: dict[str, str] = {}  # API keys etc. (secret store)
@@ -1087,6 +1094,7 @@ class User:
                 "-o", f"UserKnownHostsFile={self.dir / 'ssh' / 'known_hosts'}", "-o", "StrictHostKeyChecking=accept-new",
                 "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-o", f"ControlPath={path}", "-o", "LogLevel=ERROR",
+                *(["-o", "HashKnownHosts=yes"] if h.get("browser") else []),
                 "-p", str(h.get("port") or 22), f"{h['username']}@{h['hostname']}",
                 stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=err,
                 env=env, start_new_session=True)
@@ -1151,10 +1159,11 @@ class User:
         return {**self.env, "DEVBOX_URL": PUBLIC_URL, "DEVBOX_TOKEN": self.token}
 
     def load_hosts(self) -> list[dict]:
-        return _load_json(self.dir / "hosts.json", [])
+        """Saved hosts + browser hosts (the same dicts as page_hosts: changes to them stay in memory)."""
+        return [*_load_json(self.dir / "hosts.json", []), *self.page_hosts.values()]
 
     def save_hosts(self, hosts: list[dict]) -> None:
-        _save_json(self.dir / "hosts.json", hosts)
+        _save_json(self.dir / "hosts.json", [h for h in hosts if not h.get("browser")])
 
     # ---- boxes
     def box(self, host_id: str = "local") -> Box:
@@ -1183,7 +1192,8 @@ class User:
         if b:
             b.stop()
         if host_id != "local":  # its session records and activity go with it (re-adding starts clean)
-            shutil.rmtree(self.dir / "boxes" / host_id, ignore_errors=True)
+            for root in (self.dir, self.rt):
+                shutil.rmtree(root / "boxes" / host_id, ignore_errors=True)
 
     def hosts_summary(self) -> list[dict]:
         return [b.summary() for b in self.all_boxes()]
@@ -1593,6 +1603,8 @@ async def api_update_host(req):
     h = next((x for x in hosts if x["id"] == hid), None)
     if not h:
         raise web.HTTPNotFound(text="no such host")
+    if h.get("browser"):
+        raise web.HTTPBadRequest(text="this host is saved in a browser: edit it there")
     h.update(_host_fields({**h, **body}))
     try:
         await _apply_host_auth(u, hid, h, body)
@@ -1629,19 +1641,59 @@ async def api_test_host(req):
     return web.json_response(info)
 
 
+HOST_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+async def api_attach_hosts(req):
+    """Browser hosts: {hosts: [{id, label}]} from the browser that keeps them (address and password encrypted
+    there). The console keeps them in memory, locked, until the browser unlocks one with its address and password;
+    nothing about them is written to disk. Ids of saved hosts are refused (conflicts)."""
+    u, body = U(req), await req.json()
+    saved = {h["id"] for h in _load_json(u.dir / "hosts.json", [])}
+    conflicts = []
+    for x in body.get("hosts") or []:
+        hid, label = str(x.get("id") or ""), str(x.get("label") or "").strip()[:40]
+        if not HOST_ID_RE.fullmatch(hid) or hid == "local" or hid in saved:
+            conflicts.append(hid)
+            continue
+        if hid in u.page_hosts:
+            u.page_hosts[hid]["label"] = label or u.page_hosts[hid]["label"]
+            continue
+        u.page_hosts[hid] = {"id": hid, "label": label or hid, "hostname": "", "port": 22, "username": "",
+                             "ask_password": True, "browser": True, "created": time.time()}
+        u.box(hid)
+    u.broadcast_hosts()
+    return web.json_response({"hosts": u.hosts_summary(), "conflicts": conflicts})
+
+
 async def api_unlock_host(req):
     """Password for an "ask" host: opens its connection; the password is not kept."""
     u, hid, body = U(req), req.match_info["hid"], await req.json()
     h = next((x for x in u.load_hosts() if x["id"] == hid), None)
     if not h or not h.get("ask_password"):
         raise web.HTTPBadRequest(text="this host does not ask for a password")
+    if h.get("browser"):  # the browser sends the address with the password, every time
+        new = _host_fields({**body, "label": h["label"]})
+        if (new["hostname"], new["port"], new["username"]) != (h["hostname"], h["port"], h["username"]):
+            await u.lock(h)
+            h.pop("info", None)
+        h.update(new)
     try:
         await u.unlock(h, str(body.get("password") or ""))
     except RuntimeError as e:
-        u.log.write("host.unlock_failed", host=hid, error=str(e)[:200])
+        msg = str(e)
+        if h.get("browser"):  # the log is on disk: no address of a browser host in it
+            msg = msg.replace(h["hostname"], "<host>")
+            h.update(hostname="", username="")
+        u.log.write("host.unlock_failed", host=hid, error=msg[:200])
         raise web.HTTPBadGateway(text=str(e))
     u.log.write("host.unlock", host=hid)
     b = u.box(hid)
+    if h.get("browser") and not h.get("info"):
+        try:
+            h["info"] = await _probe(b)
+        except RuntimeError:
+            pass
     if b.terms == 0:
         b.schedule_lock(60)  # unlocked to open a session / shell: it closes again if none is opened
     b.wake.set()
@@ -1695,6 +1747,7 @@ async def api_delete_host(req):
         raise web.HTTPBadRequest(text="this host cannot be deleted")
     old = next((h for h in u.load_hosts() if h["id"] == hid), None)
     u.save_hosts([h for h in u.load_hosts() if h["id"] != hid])
+    u.page_hosts.pop(hid, None)
     if old:
         await u.lock(old)
     await u.set_host_secret(hid, None)
@@ -2874,6 +2927,7 @@ def make_app() -> web.Application:
     r.add_delete("/api/hosts/{hid}", api_delete_host)
     r.add_post("/api/hosts/{hid}/test", api_test_host)
     r.add_post("/api/hosts/{hid}/unlock", api_unlock_host)
+    r.add_post("/api/hosts/attach", api_attach_hosts)
     r.add_post("/api/hosts/hold", api_hold_hosts)
     r.add_post("/api/hosts/{hid}/lock", api_lock_host)
     r.add_get("/api/ssh-key", api_ssh_key)

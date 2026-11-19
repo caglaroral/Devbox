@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.6
+- Hosts can be **saved in this browser only**: address and password encrypted with a PIN in localStorage; the
+  console keeps nothing about them on disk and other browsers don't list them. The PIN is asked once per visit,
+  after that the host reconnects by itself.
+- The delete prompt says that saved session definitions are deleted too (since v0.9.5).
+
 ## v0.9.5
 - Deleting a host also deletes its session records (`boxes/<host>/`); re-adding it starts clean. Folders left
   by hosts deleted earlier are removed at startup.

@@ -27,6 +27,7 @@ const S = {
 const ICON_HISTORY = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6 8a5.4 5.4 0 1 0 1.5-3.8"/><path d="M2.4 2.6v2.6H5"/><path d="M8 5.2V8l2 1.4"/></svg>';
 const ICON_FOLDER = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.5 1.6H13c.7 0 1.2.5 1.2 1.2v6.3c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z"/></svg>';
 const STATUS_LABEL = { working: "Working", waiting: "Waiting for approval", idle: "Idle", shell: "Shell", dead: "Exited", stopped: "Stopped" };
+{ let hosts = []; Object.defineProperty(S, "hosts", { get: () => hosts, set: (v) => { hosts = bhFilter(v || []); }, enumerable: true }); }
 const cur = () => S.windows.find((w) => w.name === S.current);
 const hp = (p) => `#/h/${encodeURIComponent(S.hostId)}/${p}`;
 const curHost = () => S.hosts.find((h) => h.id === S.hostId);
@@ -1102,8 +1103,8 @@ function renderHostCards() {
   setHTML($("#hostCards"), list.map((h) => {
     const all = hostSessions(h), i = h.info || {};
     const busy = all.filter((x) => x.status === "working").length, running = all.filter((x) => x.running).length;
-    const addr = h.remote ? `${h.username}@${h.hostname}${h.port && h.port !== 22 ? ":" + h.port : ""}` : `${h.username || S.user || ""}@${h.hostname || "localhost"}`;
-    const AUTH = { "custom-key": "pasted private key", "password": "password (Vault)", "console-key": "console key", "ask": "password each connection", "local": "local" };
+    const addr = h.remote ? hostAddr(h) : `${h.username || S.user || ""}@${h.hostname || "localhost"}`;
+    const AUTH = { "custom-key": "pasted private key", "password": "password (Vault)", "console-key": "console key", "ask": h.browser ? "saved in this browser" : "password each connection", "local": "local" };
     const miss = h.remote ? [!i.tmux && "tmux", !i.claude && "claude"].filter(Boolean) : [];
     return `<div class="card host-card" data-hid="${esc(h.id)}">
       <div class="card-head">
@@ -1116,7 +1117,7 @@ function renderHostCards() {
         ${miss.length ? ` · <span class="danger-text">missing: ${miss.join(", ")}</span>` : ""}</div>
       <div class="card-foot">
         <span><span class="lbl">${all.length}</span> session${all.length === 1 ? "" : "s"} · <span class="lbl">${running}</span> running${busy ? ` · <b class="busy">${busy}</b> working` : ""}</span>
-        ${h.remote ? `<span class="pill" title="${h.auth === "ask" ? "the password is asked when a session or shell is opened" : ""}">${h.auth === "ask" ? "🔒 " : ""}${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
+        ${h.remote ? `<span class="pill" title="${h.browser ? "address and password are kept in this browser, encrypted with a PIN; the console has nothing about this host on disk" : h.auth === "ask" ? "the password is asked when a session or shell is opened" : ""}">${h.auth === "ask" ? "🔒 " : ""}${esc(AUTH[h.auth] || h.auth || "")}</span>` : ""}
         <span class="grow"></span>
         ${h.remote ? `<button class="btn danger" data-ha="delete">Delete</button><button class="btn" data-ha="test">Test</button>` : ""}
 
@@ -1150,9 +1151,9 @@ $("#hostCards").addEventListener("click", async (e) => {
   }
   if (a === "delete") {
     const h = S.hosts.find((x) => x.id === id);
-    if (!confirm(`Remove "${h?.label}" from the list?\ntmux sessions on the remote host are not touched; saved session definitions also stay in this console.`)) return;
+    if (!confirm(removeText(h))) return;
     try {
-      S.hosts = (await api(`/api/hosts/${enc}`, { method: "DELETE" })).hosts; toast("Removed");
+      S.hosts = (await api(`/api/hosts/${enc}`, { method: "DELETE" })).hosts; bhForget(id); toast("Removed");
       if (S.hostId === id) switchHost("local");
       renderHosts(); renderHostCards();
     } catch (err) { toast(err.message); }
@@ -1188,6 +1189,7 @@ $("#shellForm").addEventListener("submit", async (e) => {
 let unlockAfter = null;
 $("#unlockCancel").onclick = () => { unlockAfter = null; $("#unlockPw").value = ""; $("#unlockDlg").close(); };
 function unlockHost(hid, after = null) {
+  if (S.hosts.find((x) => x.id === hid)?.browser) return bhUnlock(hid).then((ok) => ok && after && after());
   const dlg0 = $("#unlockDlg");
   if (dlg0.open) { if (after) unlockAfter = after; return; }
   unlockAfter = after;
@@ -1218,6 +1220,7 @@ function syncPwMode() {
   const h = hEditing && S.hosts.find((x) => x.id === hEditing);
   $("#hRemoveKeyRow").classList.toggle("hidden", !($("#hPwAsk").checked && h && h.auth === "console-key"));
   $("#hPassword").placeholder = $("#hPwAsk").checked ? "optional — or enter it when connecting"
+    : $("#hPwBrowser").checked ? (h ? "empty: keep the saved one" : "saved in this browser, encrypted")
     : $("#hStorePw").checked ? "saved in Vault" : "used only once";
 }
 $$('[name="hPwMode"]').forEach((r) => r.addEventListener("change", syncPwMode));
@@ -1235,17 +1238,28 @@ async function openHostEditor(hid = null) {
   $("#hLabel").value = h?.label || ""; $("#hHostname").value = h?.hostname || "";
   $("#hPort").value = h?.port || 22; $("#hUser").value = h?.username || "";
   $("#hPassword").value = ""; $("#hKey").value = ""; $("#hStorePw").checked = h?.auth === "password"; $("#hPwAsk").checked = h?.auth === "ask";
-  $("#hPwOnce").checked = !["password", "ask"].includes(h?.auth); syncPwMode();
+  $("#hPwOnce").checked = !["password", "ask"].includes(h?.auth);
+  $("#hPwBrowser").checked = !!h?.browser; if (h?.browser) $("#hPwAsk").checked = false;
+  // a browser host stays one (and a console host can't become one): delete and add it again to switch
+  $$('[name="hPwMode"]').forEach((r) => { r.disabled = !!h && (r.id === "hPwBrowser") !== !!h.browser; });
+  $$("#hAuth button").forEach((b) => { b.disabled = !!h?.browser && b.dataset.a !== "password"; });
+  syncPwMode();
   // open on the host's current method: an untouched Password / Private key pane sends nothing (keeps it as it is);
   // "Manual" (drop stored credentials) only applies when it is the current method or explicitly chosen
   setAuthPane(!h ? "password" : ["password", "ask"].includes(h.auth) ? "password" : h.auth === "custom-key" ? "key" : "manual");
   const AUTH_LABEL = { "custom-key": "pasted private key", "password": "password stored in Vault", "console-key": "console key", "ask": "password asked at every connection" };
-  $("#hAuthNow").textContent = h ? `Currently: ${AUTH_LABEL[h.auth] || h.auth}. Enter a password or a new key to change it.` : "";
+  $("#hAuthNow").textContent = h?.browser ? "Saved in this browser (encrypted with your PIN). To keep it in the console instead, delete it and add it again."
+    : h ? `Currently: ${AUTH_LABEL[h.auth] || h.auth}. Enter a password or a new key to change it.` : "";
   $("#hDelete").classList.toggle("hidden", !h);
   $("#hTest").classList.toggle("hidden", !h);
   $("#hShell").classList.toggle("hidden", !h);
   $("#hSave").textContent = h ? "Save" : "Save and connect";
   renderHostInfo(h);
+  if (h?.browser) {  // its address is in this browser, encrypted
+    const rec = await bhRecord(hid);
+    if (!rec) return;
+    $("#hHostname").value = rec.hostname; $("#hPort").value = rec.port || 22; $("#hUser").value = rec.username;
+  }
   $("#app").classList.add("host-open"); $("#hostEditor").setAttribute("aria-hidden", "false");
   try { $("#hPub").textContent = (await api("/api/ssh-key")).public_key; } catch {}
   if (!isTouch()) (h ? $("#hLabel") : $("#hHostname")).focus();
@@ -1270,6 +1284,7 @@ $("#hostForm").addEventListener("submit", async (e) => {
   const curH = hEditing && S.hosts.find((x) => x.id === hEditing);
   if (hAuth === "password" && !$("#hPassword").value && ["password", "ask"].includes(curH?.auth) && $("#hPwOnce").checked)
     return toast("Enter the password once to switch this host to the console key");
+  if (hAuth === "password" && $("#hPwBrowser").checked) return bhSaveHost(body, $("#hPassword").value);
   if (hAuth === "password" && $("#hPwAsk").checked) {
     body.auth = "ask";
     if ($("#hPassword").value) body.password = $("#hPassword").value;
@@ -1316,13 +1331,155 @@ $("#hTest").onclick = async () => {
 $("#hShell").onclick = () => { const id = hEditing; closeHostEditor(); openShell(id); };
 $("#hDelete").onclick = async () => {
   const h = S.hosts.find((x) => x.id === hEditing);
-  if (!confirm(`Remove "${h?.label}" from the list?\ntmux sessions on the remote host are not touched; saved session definitions also stay in this console.`)) return;
+  if (!confirm(removeText(h))) return;
   try {
     S.hosts = (await api(`/api/hosts/${encodeURIComponent(hEditing)}`, { method: "DELETE" })).hosts;
-    closeHostEditor(); toast("Removed");
+    bhForget(hEditing); closeHostEditor(); toast("Removed");
     if (S.hostId === hEditing) go("#/h/local/sessions"); else renderHosts();
   } catch (err) { toast(err.message); }
 };
+
+/* ------------------------------------------------------------------ browser hosts
+   Address + password kept in this browser's localStorage, encrypted with a PIN (scrypt -> XChaCha20-Poly1305 from
+   @noble: WebCrypto is off on plain http). The console gets {id, label} to list the host (locked) and the address
+   + password only when it connects; it keeps them in memory, never on disk. Other browsers don't list the host. */
+const BH_STORE = "devbox.browserHosts";
+let bhKeyBytes = null;          // derived from the PIN; this page only
+let nobleP = null;
+const noble = () => (nobleP ||= Promise.all([
+  import("https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/scrypt.js/+esm"),
+  import("https://cdn.jsdelivr.net/npm/@noble/ciphers@2.4.0/chacha.js/+esm"),
+]).then(([h, c]) => ({ scrypt: h.scryptAsync, aead: c.xchacha20poly1305 })).catch((e) => { nobleP = null; throw e; }));
+const b64 = (u8) => btoa(String.fromCharCode(...u8));
+const unb64 = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+function bhStore() { try { return JSON.parse(localStorage.getItem(BH_STORE)) || null; } catch { return null; } }
+function bhPut(st) { try { st ? localStorage.setItem(BH_STORE, JSON.stringify(st)) : localStorage.removeItem(BH_STORE); } catch {} }
+const bhIds = () => new Set((bhStore()?.hosts || []).map((x) => x.id));
+async function bhSeal(obj, key = bhKeyBytes) {
+  const { aead } = await noble(), n = crypto.getRandomValues(new Uint8Array(24));
+  return { n: b64(n), c: b64(aead(key, n).encrypt(new TextEncoder().encode(JSON.stringify(obj)))) };
+}
+async function bhOpen(box, key = bhKeyBytes) {
+  const { aead } = await noble();
+  return JSON.parse(new TextDecoder().decode(aead(key, unb64(box.n)).decrypt(unb64(box.c))));
+}
+function bhFilter(list) {
+  const mine = bhIds();
+  if ([...mine].some((id) => !list.some((h) => h.id === id))) setTimeout(bhAttach);
+  return list.filter((h) => !h.browser || mine.has(h.id));
+}
+let bhAttachAt = 0;
+async function bhAttach(force = false) {
+  const hosts = (bhStore()?.hosts || []).map(({ id, label }) => ({ id, label }));
+  if (!hosts.length || (!force && Date.now() - bhAttachAt < 5000)) return;
+  bhAttachAt = Date.now();
+  try {
+    const r = await api("/api/hosts/attach", { method: "POST", body: { hosts } });
+    if (r.conflicts.length) toast(`Browser hosts not listed (the id is taken): ${r.conflicts.join(", ")}`);
+    S.hosts = r.hosts; renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards();
+  } catch {}
+}
+function bhForget(id) {
+  const st = bhStore(); if (!st) return;
+  st.hosts = st.hosts.filter((x) => x.id !== id); bhPut(st);
+}
+const removeText = (h) => `Remove "${h?.label}"?\ntmux sessions on the remote host keep running; their saved definitions in this console are deleted.` +
+  (h?.browser ? "\nIts address and password are deleted from this browser." : "");
+// the PIN: asked once per page load; the first one sets it
+let pinWait = null;
+function bhKey() {
+  if (bhKeyBytes) return Promise.resolve(bhKeyBytes);
+  if (pinWait) return pinWait.p;
+  const fresh = !bhStore();
+  $("#pinTitle").textContent = fresh ? "Set a PIN for this browser" : "PIN";
+  $("#pinInfo").textContent = fresh
+    ? "Hosts saved in this browser are encrypted with this PIN. It is asked once each time the console is opened; it can't be recovered (forgetting it means adding those hosts again)."
+    : "Unlocks the hosts saved in this browser.";
+  $("#pin2Row").classList.toggle("hidden", !fresh); $("#pinForget").classList.toggle("hidden", fresh);
+  $("#pin1").value = ""; $("#pin2").value = "";
+  let done; const p = new Promise((res) => { done = res; });
+  pinWait = { p, done };
+  $("#pinDlg").showModal(); $("#pin1").focus();
+  return p;
+}
+function pinClose(key) { const w = pinWait; pinWait = null; $("#pinDlg").close(); w?.done(key); }
+$("#pinCancel").onclick = () => pinClose(null);
+$("#pinDlg").addEventListener("cancel", (e) => { e.preventDefault(); pinClose(null); });
+$("#pinForget").onclick = async () => {
+  if (!confirm("Forget the PIN? Every host saved in this browser is removed (add them again with a new PIN).")) return;
+  for (const id of bhIds()) await api(`/api/hosts/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  bhPut(null);
+  try { S.hosts = (await api("/api/hosts")).hosts; } catch {}
+  renderHosts(); renderHostCards(); pinClose(null); toast("Browser hosts removed");
+};
+$("#pinForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pin = $("#pin1").value, st = bhStore();
+  if (pin.length < 4) return toast("At least 4 characters");
+  if (!st && pin !== $("#pin2").value) return toast("The two PINs differ");
+  const btn = $("#pinOk"); btn.disabled = true; btn.textContent = "Checking…";
+  try {
+    const { scrypt } = await noble();
+    const salt = st ? unb64(st.salt) : crypto.getRandomValues(new Uint8Array(16));
+    const key = await scrypt(new TextEncoder().encode(pin), salt, { N: 2 ** 15, r: 8, p: 1, dkLen: 32 });
+    if (st) {
+      try { await bhOpen(st.check, key); } catch { toast("Wrong PIN"); $("#pin1").select(); return; }
+    } else bhPut({ v: 1, salt: b64(salt), check: await bhSeal("devbox", key), hosts: [] });
+    bhKeyBytes = key; pinClose(key);
+  } catch (err) { toast(`Encryption library could not load: ${err.message}`); }
+  finally { btn.disabled = false; btn.textContent = "OK"; }
+});
+async function bhRecord(id) {
+  const box = bhStore()?.hosts.find((x) => x.id === id);
+  if (!box) { toast("This host is not saved in this browser"); return null; }
+  if (!(await bhKey())) return null;
+  try { return await bhOpen(box); } catch { toast("Could not decrypt this host"); return null; }
+}
+const bhBusy = {};
+function bhUnlock(id) {
+  return (bhBusy[id] ||= (async () => {
+    const rec = await bhRecord(id);
+    if (!rec) return false;
+    try {
+      S.hosts = (await api(`/api/hosts/${encodeURIComponent(id)}/unlock`, { method: "POST", body: rec })).hosts;
+      renderHosts(); renderHostCards(); if (S.route === "sessions") renderCards();
+      holdAsk();
+      return true;
+    } catch (err) { toast(err.message); return false; }
+  })().finally(() => { delete bhBusy[id]; }));
+}
+async function bhSaveHost(body, pw) {
+  if (!body.hostname || !body.username) return toast("Host and user are required");
+  if (!(await bhKey())) return;
+  const st = bhStore(), old = hEditing ? st.hosts.find((x) => x.id === hEditing) : null;
+  const prev = old ? await bhRecord(old.id) : null;
+  if (old && !prev) return;
+  if (!pw && !prev) return toast("Enter the password");
+  const rec = { hostname: body.hostname, port: body.port || 22, username: body.username, password: pw || prev.password };
+  const label = body.label || body.hostname;
+  let id = old?.id;
+  if (!id) {  // random tail: another browser may hold a host with the same name
+    const base = label.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "host";
+    id = `${base}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+  st.hosts = [...st.hosts.filter((x) => x.id !== id), { id, label, ...(await bhSeal(rec)) }]; bhPut(st);
+  const btn = $("#hSave"); btn.disabled = true; btn.textContent = "Connecting…";
+  try {
+    await api("/api/hosts/attach", { method: "POST", body: { hosts: [{ id, label }] } });
+    const changed = !prev || ["hostname", "port", "username", "password"].some((k) => rec[k] !== prev[k]);
+    S.hosts = changed ? (await api(`/api/hosts/${encodeURIComponent(id)}/unlock`, { method: "POST", body: rec })).hosts
+                      : (await api("/api/hosts")).hosts;
+    closeHostEditor(); renderHosts(); renderHostCards(); holdAsk();
+    if (old) toast("Saved");
+    else { toast(`Connected: ${label} — saved in this browser`); go(`#/h/${encodeURIComponent(id)}/sessions`); }
+  } catch (err) {  // back to what was there
+    const st2 = bhStore(); st2.hosts = st2.hosts.filter((x) => x.id !== id); if (old) st2.hosts.push(old); bhPut(st2);
+    if (!old) api(`/api/hosts/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => { S.hosts = r.hosts; renderHosts(); }).catch(() => {});
+    toast(err.message);
+  } finally { btn.disabled = false; btn.textContent = old ? "Save" : "Save and connect"; }
+}
+const hostAddr = (h) => h.browser && !h.hostname ? "saved in this browser 🔒"
+  : `${h.username}@${h.hostname}${h.port && h.port !== 22 ? ":" + h.port : ""}`;
 
 /* ------------------------------------------------------------------ routing */
 function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
@@ -1471,7 +1628,7 @@ function groupHead(h, wins) {
   const i = h.info || {};
   const miss = h.remote ? [!i.tmux && "tmux", !i.claude && "claude"].filter(Boolean) : [];
   const err = h.id === S.hostId ? S.error || h.error : S.byHost[h.id]?.error || h.error;
-  const addr = h.remote ? `${h.username}@${h.hostname}${h.port && h.port !== 22 ? ":" + h.port : ""}` : "this machine";
+  const addr = h.remote ? hostAddr(h) : "this machine";
   const running = wins.filter((w) => w.running).length;
   return `<div class="grp-head ${err || miss.length ? "warn" : ""}" data-host="${esc(h.id)}">
       <span class="hico">${h.remote ? "⇄" : "⌂"}</span><b>${esc(h.label)}</b>
@@ -1998,7 +2155,7 @@ function renderPalette() {
       label: w.display + (w.hidden ? " (hidden)" : ""), dot: w.status, run: () => openSession(w.name, h.id),
       k: `${w.name}${S.hosts.length > 1 ? " @" + hostLabel(h.id) : ""} · ${STATUS_LABEL[w.status] || ""} · ${shortPath(w.cwd)}` }))),
     ...(S.hosts.length ? S.hosts : [{ id: S.hostId, label: S.host }]).map((h) => ({ label: `New shell on ${h.label}`, k: "command", run: () => openShell(h.id) })),
-    ...S.hosts.filter((h) => h.id !== S.hostId).map((h) => ({ label: `Host: ${h.label}`, k: `${h.username}@${h.hostname}`, run: () => go(`#/h/${encodeURIComponent(h.id)}/sessions`) })),
+    ...S.hosts.filter((h) => h.id !== S.hostId).map((h) => ({ label: `Host: ${h.label}`, k: hostAddr(h), run: () => go(`#/h/${encodeURIComponent(h.id)}/sessions`) })),
     { label: "Add remote host…", k: "command", run: () => openHostEditor() },
     { label: "New session…", k: "command", run: () => openEditor() },
     { label: "Sessions", k: "page", run: () => go("#/sessions") },

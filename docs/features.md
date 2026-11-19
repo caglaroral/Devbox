@@ -22,10 +22,20 @@ corner shows the console version and build commit, e.g. `devbox v0.7.6 · 3f2c1a
     says what is missing. While locked the last known sessions stay listed; closing a shell / deleting a
     session then needs no password (it leaves the list and ends on the host at the next unlock). Switching a key host to this mode
     can also remove the console's key from the host's `authorized_keys`.
+  - **Save in this browser only**: the address, user and password stay in that browser's localStorage, encrypted
+    with a PIN (scrypt + XChaCha20-Poly1305 from @noble, loaded from jsdelivr; WebCrypto is unavailable on plain
+    http). The PIN is set with the first such host and asked once per visit; "Forgot PIN" removes those hosts.
+    The console gets only id + label to list the host (locked) and the address + password when it connects,
+    and keeps them in memory: no `hosts.json` entry, session records in the runtime tmpfs (gone after a
+    console restart; the tmux sessions on the host keep running), the address scrubbed from the log, and its SSH host key saved
+    under a hashed name. It behaves like "ask" otherwise (closes when the page is hidden), but reconnects without
+    typing anything while the PIN is known. Other browsers / devices don't list it — add it there too. To move a
+    host between the console and a browser, delete it and add it again.
   - **Password, saved in Vault**: only for hosts that don't allow key login.
   - **Private key** (pasted, kept in Vault) or **Manual** (you add the console's public key yourself).
 - Each host card shows reachability, OS, tmux and claude versions, and buttons for **Shell**, **Test**,
-  **Sessions**, **Edit**, **Delete**.
+  **Sessions**, **Edit**, **Delete**. Deleting a host also deletes its saved session definitions (the tmux
+  sessions on the host keep running).
 
 ## Sessions
 

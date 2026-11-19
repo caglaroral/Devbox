@@ -51,6 +51,47 @@ fs.mkdirSync(OUT, { recursive: true });
   await d.click('#hostCards [data-hid="gpu-box"] [data-ha="edit"]'); await d.waitForTimeout(500); await shot(d, "d11-hosts-edit");
   if (!(await d.locator("#app.host-open").count())) errors.push("edit on the hosts page did not open the host editor");
   await d.keyboard.press("Escape");
+  // browser host: address + password saved in this browser (PIN-encrypted), listed only here, PIN after a reload
+  await d.goto(U + "/#/hosts"); await d.waitForTimeout(600);
+  await d.evaluate(() => openHostEditor()); await d.waitForTimeout(300);
+  await d.fill("#hLabel", "Pocket"); await d.fill("#hHostname", "fakehost"); await d.fill("#hUser", "dev2");
+  await d.click('#hAuth [data-a="password"]'); await d.fill("#hPassword", "secret"); await d.check("#hPwBrowser");
+  await d.click("#hSave");
+  await d.waitForSelector("#pinDlg[open]"); await shot(d, "d12-pin-new");
+  await d.fill("#pin1", "2468"); await d.fill("#pin2", "2468"); await d.click("#pinOk");
+  await d.waitForFunction(() => S.hosts.some((h) => h.browser && !h.locked), null, { timeout: 20000 }).catch(() => {});
+  const bh = await d.evaluate(() => ({ h: S.hosts.find((h) => h.browser), raw: localStorage.getItem("devbox.browserHosts") || "" }));
+  const bid = bh.h?.id;
+  console.log("browser host:", bid, "locked:", bh.h?.locked, "stored:", bh.raw.length, "bytes");
+  if (!bid || bh.h.locked) errors.push(`browser host was not added / connected: ${JSON.stringify(bh.h)}`);
+  if (!bh.raw || /fakehost|secret|dev2/.test(bh.raw)) errors.push("browser host: address or password readable in localStorage");
+  const other = await ctx({ viewport: { width: 1280, height: 800 }, tag: "other-browser" });
+  await other.goto(U + "/#/hosts"); await other.waitForTimeout(1500);
+  const seen = await other.evaluate((id) => S.hosts.some((h) => h.id === id), bid);
+  await other.close();
+  if (seen) errors.push("browser host is listed in another browser");
+  if (bid) {
+    await d.evaluate((id) => fetch(`/api/hosts/${id}/lock`, { method: "POST" }), bid);
+    await d.reload(); await d.waitForTimeout(1500);
+    d.evaluate((id) => unlockHost(id), bid);
+    await d.waitForSelector("#pinDlg[open]");
+    const repeat = await d.isVisible("#pin2");
+    await d.fill("#pin1", "1111"); await d.click("#pinOk"); await d.waitForTimeout(1500);
+    const stillOpen = await d.isVisible("#pinDlg");
+    await d.fill("#pin1", "2468"); await d.click("#pinOk");
+    await d.waitForFunction((id) => S.hosts.some((h) => h.id === id && !h.locked), bid, { timeout: 20000 }).catch(() => {});
+    const unlocked = await d.evaluate((id) => S.hosts.some((h) => h.id === id && !h.locked), bid);
+    console.log(`browser host after reload: repeat field=${repeat} wrong PIN keeps the dialog=${stillOpen} unlocked=${unlocked}`);
+    if (repeat || !stillOpen || !unlocked) errors.push("browser host: PIN after reload did not unlock it");
+    await d.evaluate((id) => openHostEditor(id), bid); await d.waitForTimeout(500);
+    const filled = await d.inputValue("#hHostname");
+    d.once("dialog", (dl) => dl.accept());
+    await d.click("#hDelete"); await d.waitForTimeout(800);
+    const left = await d.evaluate(() => JSON.parse(localStorage.getItem("devbox.browserHosts")).hosts.length);
+    const gone = await d.evaluate((id) => !S.hosts.some((h) => h.id === id), bid);
+    console.log(`browser host editor address=${filled} after delete: in browser=${left} listed=${!gone}`);
+    if (filled !== "fakehost" || left || !gone) errors.push("browser host: edit / delete failed");
+  }
   await d.goto(U + "/#/settings"); await d.waitForTimeout(800); await shot(d, "d6-settings");
   await d.goto(U + "/#/team"); await d.waitForTimeout(800); await shot(d, "d7-team");
 

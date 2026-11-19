@@ -237,3 +237,34 @@ def test_delete_host_removes_its_records(console):
     assert short(r["hosts"])["gone"]
     saved = json.loads((box / "sessions.json").read_text()) if (box / "sessions.json").exists() else {}
     assert "g1" not in saved.get("sessions", {}), "re-adding the same host starts without the old records"
+
+
+def test_browser_host_leaves_nothing_on_disk(console):
+    """Browser hosts: the browser keeps address + password (encrypted with a PIN) and sends them at unlock; the console
+    keeps the host in memory only (no hosts.json entry, session records in the runtime dir, no address in the log)."""
+    r = console.ok("POST", "/api/hosts/attach", {"hosts": [{"id": "pocket", "label": "Pocket"}, {"id": "local"}]})
+    assert r["conflicts"] == ["local"]
+    h = short(r["hosts"])["pocket"]
+    assert h["browser"] and h["auth"] == "ask" and h["locked"] and not h["hostname"]
+    st, r = console.call("POST", "/api/hosts/pocket/unlock", {"hostname": "fakehost", "username": "dev", "password": "nope"})
+    assert st >= 400 and "wrong password" in r
+    r = console.ok("POST", "/api/hosts/pocket/unlock", {"hostname": "fakehost", "port": 22, "username": "dev", "password": "secret"})
+    h = short(r["hosts"])["pocket"]
+    assert not h["locked"] and h["hostname"] == "fakehost" and h["info"].get("ok")
+    (console.remote_home / "pk").mkdir(exist_ok=True)
+    console.ok("POST", "/api/sessions?host=pocket", {"name": "pk1", "cwd": "~/pk", "command": "sleep 300"})
+    assert console.window("pk1", host="pocket")["running"]
+    assert console.call("PATCH", "/api/hosts/pocket", {"label": "x"})[0] == 400, "edited in its browser only"
+    # a saved host can't take the id; ordinary hosts still save without the browser one
+    console.ok("POST", "/api/hosts", {"label": "Disk", "hostname": "fakehost", "username": "dev2", "password": "secret"})
+    udir = console.data / "users" / console.user
+    on_disk = (udir / "hosts.json").read_text() + "".join(p.read_text() for p in (udir / "logs").rglob("*") if p.is_file())
+    assert "pocket" not in (udir / "hosts.json").read_text()
+    assert not (udir / "boxes" / "pocket").exists(), "session records in the runtime dir, not in the data dir"
+    assert "secret" not in on_disk
+    kh = udir / "ssh" / "known_hosts"  # (the fake ssh of the tests doesn't write it; real ssh: HashKnownHosts)
+    assert not kh.exists() or "fakehost" not in kh.read_text().split("|1|")[0]
+    console.ok("DELETE", "/api/sessions/pk1?host=pocket")
+    r = console.ok("DELETE", "/api/hosts/pocket")
+    assert "pocket" not in short(r["hosts"])
+    console.ok("DELETE", "/api/hosts/disk")
